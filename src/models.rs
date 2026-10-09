@@ -75,6 +75,7 @@ pub struct AssetQuery {
     pub favorite: Option<bool>,
     pub format: Option<String>,
     pub tag: Option<String>,
+    pub folder: Option<String>,
     pub sort: Option<String>,
     pub offset: Option<u32>,
     pub limit: Option<u32>,
@@ -92,6 +93,29 @@ pub struct AssetList {
 pub struct AssetPatch {
     pub favorite: Option<bool>,
     pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AssetBatch {
+    pub ids: Vec<i64>,
+    pub favorite: Option<bool>,
+    pub add_tags: Option<Vec<String>>,
+    pub remove_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Folder {
+    pub path: String,
+    pub name: String,
+    pub parent: Option<String>,
+    pub asset_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FolderList {
+    pub folders: Vec<Folder>,
+    pub parent: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -59,7 +59,9 @@
       "unfavoriteName": "Remove {{name}} from favorites",
       "favoriteName": "Add {{name}} to favorites",
       "unfavorite": "Remove from favorites",
-      "favorite": "Add to favorites"
+      "favorite": "Add to favorites",
+      "select": "Select {{name}}",
+      "unselect": "Deselect {{name}}"
     },
     "empty": {
       "welcomeEyebrow": "YOUR PRIVATE CREATIVE SPACE",
@@ -109,6 +111,21 @@
       "relativePath": "Relative path",
       "copyPath": "Copy relative path",
       "copied": "Copied"
+    },
+    "batchTags": {
+      "title": "Organize these tags together",
+      "intro_one": "Apply tags to {{formattedCount}} selected asset.",
+      "intro_other": "Apply tags to {{formattedCount}} selected assets.",
+      "action": "Tag action",
+      "add": "Add tags",
+      "remove": "Remove tags",
+      "placeholder": "Enter tags and press Enter to add\nSeparate multiple tags with commas or new lines",
+      "addHint": "Existing tags are kept. These tags are added to each selected asset. Each asset can have up to 50 tags, with up to 50 characters per tag.",
+      "removeHint": "Only matching tags are removed. Other tags are kept, and assets without these tags are unchanged.",
+      "existingTags": "Existing tags",
+      "limitError": "Use up to 50 tags at once, with up to 50 characters per tag. Shorten your list and try again.",
+      "applying": "Applying…",
+      "apply": "Apply to selected assets"
     }
   }
 }

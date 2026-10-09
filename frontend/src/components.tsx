@@ -186,21 +186,81 @@ export function Thumbnail({ asset }: { asset: Asset }) {
   </>;
 }
 
-export function AssetCard({ asset, onOpen, onFavorite }: {
+export function AssetCard({ asset, onOpen, onFavorite, selectionMode = false, selected = false, selectionDisabled = false, onSelect }: {
   asset: Asset | undefined;
   onOpen: () => void;
   onFavorite: (asset: Asset) => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  selectionDisabled?: boolean;
+  onSelect?: () => void;
 }) {
   const { t } = useTranslation();
   if (!asset) return <div className="asset-card skeleton-card" aria-hidden="true"><div className="card-image skeleton" /><div className="skeleton-line" /><div className="skeleton-line short" /></div>;
-  return <article className="asset-card">
-    <button className="card-open" onClick={onOpen} aria-label={t('components.card.preview', { name: asset.name })}>
+  return <article className={`asset-card ${selected ? 'is-selected' : ''}`}>
+    <button className="card-open" onClick={selectionMode ? onSelect : onOpen} aria-label={t(selectionMode ? selected ? 'components.card.unselect' : 'components.card.select' : 'components.card.preview', { name: asset.name })} aria-pressed={selectionMode ? selected : undefined} disabled={selectionMode && selectionDisabled}>
       <div className="card-image"><Thumbnail key={asset.thumbnail_url} asset={asset} /><span className="format-badge">{asset.format.toUpperCase()}</span></div>
       <div className="card-caption"><h3 title={asset.name}>{asset.name}</h3><div className="card-meta"><span>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : t('components.card.dimensionsPending')}</span><span>{formatSize(asset.size)}</span></div></div>
     </button>
-    <button className={`card-favorite ${asset.favorite ? 'is-favorite' : ''}`} onClick={() => onFavorite(asset)} aria-label={t(asset.favorite ? 'components.card.unfavoriteName' : 'components.card.favoriteName', { name: asset.name })} aria-pressed={asset.favorite} title={t(asset.favorite ? 'components.card.unfavorite' : 'components.card.favorite')}><Star size={15} fill={asset.favorite ? 'currentColor' : 'none'} /></button>
+    {selectionMode ? <label className="card-select-control"><input type="checkbox" checked={selected} onChange={onSelect} disabled={selectionDisabled} aria-label={t('components.card.select', { name: asset.name })} /><span aria-hidden="true">{selected && <Check size={13} strokeWidth={2.7} />}</span></label> : <button className={`card-favorite ${asset.favorite ? 'is-favorite' : ''}`} onClick={() => onFavorite(asset)} aria-label={t(asset.favorite ? 'components.card.unfavoriteName' : 'components.card.favoriteName', { name: asset.name })} aria-pressed={asset.favorite} title={t(asset.favorite ? 'components.card.unfavorite' : 'components.card.favorite')}><Star size={15} fill={asset.favorite ? 'currentColor' : 'none'} /></button>}
     {asset.tags.length > 0 && <span className="card-tag-count" title={asset.tags.join(t('components.common.tagSeparator'))}><Tag size={11} />{asset.tags.length}</span>}
   </article>;
+}
+
+export function BatchTagsDialog({ count, existingTags, onClose, onApply }: {
+  count: number;
+  existingTags: string[];
+  onClose: () => void;
+  onApply: (mode: 'add' | 'remove', tags: string[]) => Promise<void>;
+}) {
+  const { t, i18n } = useTranslation();
+  const [mode, setMode] = useState<'add' | 'remove'>('add');
+  const [input, setInput] = useState('');
+  const [chosenTags, setChosenTags] = useState<string[]>([]);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const parseTags = () => [...new Set([...chosenTags, ...input.split(/[,，;；\n]/).map(tag => tag.trim()).filter(Boolean)])];
+  const addInput = () => {
+    const next = parseTags();
+    if (next.length > 50 || next.some(tag => [...tag].length > 50)) {
+      setError(t('components.batchTags.limitError'));
+      return chosenTags;
+    }
+    setError(null);
+    setChosenTags(next); setInput('');
+    return next;
+  };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (pending) return;
+    const selectedTags = parseTags();
+    if (!selectedTags.length) return;
+    if (selectedTags.length > 50 || selectedTags.some(tag => [...tag].length > 50)) {
+      setError(t('components.batchTags.limitError'));
+      return;
+    }
+    setPending(true); setError(null);
+    try { await onApply(mode, selectedTags); onClose(); }
+    catch (cause) { setError(errorMessage(cause)); }
+    finally { setPending(false); }
+  };
+  return <Dialog onClose={() => { if (!pending) onClose(); }} labelledBy="batch-tags-title" className="add-dialog batch-tags-dialog">
+    <button className="icon-button dialog-close" onClick={onClose} disabled={pending} aria-label={t('components.common.close')}><X size={20} /></button>
+    <div className="dialog-symbol"><Tag size={24} /></div>
+    <h2 id="batch-tags-title">{t('components.batchTags.title')}</h2>
+    <p className="dialog-intro">{t('components.batchTags.intro', { count, formattedCount: count.toLocaleString(i18n.language === 'en' ? 'en-US' : 'zh-CN') })}</p>
+    <div className="batch-tag-mode" role="group" aria-label={t('components.batchTags.action')}><button className={mode === 'add' ? 'active' : ''} onClick={() => setMode('add')} aria-pressed={mode === 'add'} disabled={pending}><Plus size={14} />{t('components.batchTags.add')}</button><button className={mode === 'remove' ? 'active' : ''} onClick={() => setMode('remove')} aria-pressed={mode === 'remove'} disabled={pending}><X size={14} />{t('components.batchTags.remove')}</button></div>
+    <form onSubmit={event => void submit(event)}>
+      <label className="field-label" htmlFor="batch-tags-input">{t('components.preview.tags')}</label>
+      {chosenTags.length > 0 && <div className="editable-tags">{chosenTags.map(tag => <span className="tag-chip" key={tag}>{tag}<button type="button" onClick={() => setChosenTags(chosenTags.filter(item => item !== tag))} disabled={pending} aria-label={t('components.preview.removeTag', { tag })}><X size={12} /></button></span>)}</div>}
+      <textarea id="batch-tags-input" className="batch-tags-input" ref={inputRef} value={input} onChange={event => setInput(event.target.value)} placeholder={t('components.batchTags.placeholder')} rows={3} maxLength={2500} disabled={pending} data-autofocus onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); addInput(); } }} />
+      <p className="quiet-note">{t(mode === 'add' ? 'components.batchTags.addHint' : 'components.batchTags.removeHint')}</p>
+      {existingTags.length > 0 && <div className="batch-tag-suggestions"><span>{t('components.batchTags.existingTags')}</span><div>{existingTags.slice(0, 30).map(tag => <button type="button" key={tag} disabled={pending || chosenTags.includes(tag) || chosenTags.length >= 50} onClick={() => { setChosenTags([...new Set([...chosenTags, tag])]); inputRef.current?.focus(); }}>{tag}<Plus size={11} /></button>)}</div></div>}
+      {error && <div className="inline-error" role="alert">{error}</div>}
+      <div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose} disabled={pending}>{t('components.common.cancel')}</button><button className="button primary" disabled={pending || !parseTags().length}>{pending ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}{t(pending ? 'components.batchTags.applying' : 'components.batchTags.apply')}</button></div>
+    </form>
+  </Dialog>;
 }
 
 export function EmptyState({ kind, onAdd, onReset }: { kind: 'welcome' | 'filtered' | 'empty'; onAdd: () => void; onReset: () => void }) {

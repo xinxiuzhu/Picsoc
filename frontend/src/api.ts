@@ -58,6 +58,25 @@ export interface DirectoryListing {
   truncated: boolean;
 }
 
+export interface LibraryFolder {
+  path: string;
+  name: string;
+  parent: string | null;
+  asset_count: number;
+}
+
+export interface LibraryFolders {
+  folders: LibraryFolder[];
+  parent: string;
+  truncated: boolean;
+}
+
+export interface BatchChanges {
+  favorite?: boolean;
+  add_tags?: string[];
+  remove_tags?: string[];
+}
+
 export async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');

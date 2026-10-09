@@ -78,6 +78,39 @@
     "rescan": "重新扫描",
     "dismissNotification": "关闭通知",
     "languageChinese": "简体中文",
-    "languageEnglish": "English"
+    "languageEnglish": "English",
+    "batch": {
+      "start": "批量整理",
+      "done": "完成选择",
+      "toolbar": "批量操作",
+      "selected": "已选 {{formattedCount}} 项",
+      "limitShort": "最多 {{count}} 项",
+      "limit": "一次最多选择 {{count}} 项，已保留上限内的选择。",
+      "selectVisible": "选择可见项",
+      "clear": "清空",
+      "favorite": "收藏",
+      "unfavorite": "取消收藏",
+      "tags": "管理标签",
+      "applying": "正在更新素材",
+      "noVisibleAssets": "可见素材正在加载，请稍后再选。",
+      "chooseFirst": "请先选择要整理的素材。",
+      "updated": "已更新 {{formattedCount}} 张素材"
+    },
+    "folders": {
+      "navigation": "素材库文件夹",
+      "breadcrumb": "当前文件夹位置",
+      "allInLibrary": "查看这个素材库的全部图片",
+      "loading": "正在读取子文件夹",
+      "up": "上一级",
+      "open": "打开文件夹 {{name}}",
+      "noChildren": "当前文件夹没有含图片的子文件夹。",
+      "indexedOnly": "这里显示索引中含图片的文件夹。",
+      "collapse": "收起文件夹",
+      "showAll": "查看全部 {{formattedCount}} 个子文件夹",
+      "truncated": "仅显示前 1,000 个子文件夹。进入子文件夹可继续浏览其目录。"
+    },
+    "cancelScan": "取消扫描",
+    "scanCanceling": "正在取消…",
+    "scanCancelRequested": "已请求取消扫描，已索引的图片会保留。"
   }
 }

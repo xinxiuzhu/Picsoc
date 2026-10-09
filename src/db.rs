@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -7,7 +8,13 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 
-use crate::models::{Asset, AssetList, AssetPatch, AssetQuery, Library, ScanStatus, Stats, Tag};
+use crate::{
+    folders,
+    models::{
+        Asset, AssetBatch, AssetList, AssetPatch, AssetQuery, Folder, FolderList, Library,
+        ScanStatus, Stats, Tag,
+    },
+};
 
 const ASSET_COLUMNS: &str = "a.id,a.library_id,a.name,a.relative_path,a.format,a.size,a.width,a.height,a.modified_at,a.favorite,a.mtime_ns,l.path,a.thumbnail_error,COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM asset_tags WHERE asset_id=a.id ORDER BY tag)), '[]')";
 
@@ -160,6 +167,11 @@ impl Db {
             filters.push("a.library_id=?".into());
             values.push(id.into());
         }
+        if let Some(folder) = query.folder.as_deref().filter(|path| !path.is_empty()) {
+            let (lower, upper) = folders::subtree_bounds(folder);
+            filters.push("a.relative_path>=? AND a.relative_path<?".into());
+            values.extend([lower.into(), upper.into()]);
+        }
         if let Some(favorite) = query.favorite {
             filters.push("a.favorite=?".into());
             values.push(i64::from(favorite).into());
@@ -226,6 +238,116 @@ impl Db {
             }
             tx.commit()?;
             query_asset(conn, id)
+        })
+    }
+
+    pub fn batch_assets(&self, batch: &AssetBatch) -> Result<usize> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            for id in &batch.ids {
+                tx.query_row("SELECT id FROM assets WHERE id=?1", [id], |row| {
+                    row.get::<_, i64>(0)
+                })?;
+                if let Some(favorite) = batch.favorite {
+                    tx.execute(
+                        "UPDATE assets SET favorite=?1 WHERE id=?2",
+                        params![favorite, id],
+                    )?;
+                }
+                if let Some(tags) = &batch.remove_tags {
+                    let mut statement =
+                        tx.prepare_cached("DELETE FROM asset_tags WHERE asset_id=?1 AND tag=?2")?;
+                    for tag in tags {
+                        statement.execute(params![id, tag])?;
+                    }
+                }
+                if let Some(tags) = &batch.add_tags {
+                    let mut statement = tx.prepare_cached(
+                        "INSERT OR IGNORE INTO asset_tags(asset_id,tag) VALUES(?1,?2)",
+                    )?;
+                    for tag in tags {
+                        statement.execute(params![id, tag])?;
+                    }
+                }
+                if batch.add_tags.is_some() {
+                    let count = tx.query_row(
+                        "SELECT COUNT(*) FROM asset_tags WHERE asset_id=?1",
+                        [id],
+                        |row| row.get::<_, i64>(0),
+                    )?;
+                    anyhow::ensure!(count <= 50, "批量操作后每张图片最多 50 个标签");
+                }
+            }
+            tx.commit()?;
+            Ok(batch.ids.len())
+        })
+    }
+
+    pub fn folders(&self, library_id: i64, parent: &str) -> Result<FolderList> {
+        // Validate the library before returning an empty result for an unknown id.
+        self.library(library_id)?;
+        let mut counts = BTreeMap::<String, i64>::new();
+        let mut cursor = String::new();
+        let mut truncated = false;
+        let (lower, upper) = folders::subtree_bounds(parent);
+        'pages: loop {
+            let paths = self.with(|conn| {
+                let mut sql = "SELECT relative_path FROM assets WHERE library_id=?".to_owned();
+                let mut values = vec![Value::from(library_id)];
+                if !parent.is_empty() {
+                    sql.push_str(" AND relative_path>=? AND relative_path<?");
+                    values.extend([lower.clone().into(), upper.clone().into()]);
+                }
+                if !cursor.is_empty() {
+                    sql.push_str(" AND relative_path>?");
+                    values.push(cursor.clone().into());
+                }
+                sql.push_str(" ORDER BY relative_path LIMIT 500");
+                let mut stmt = conn.prepare(&sql)?;
+                Ok(stmt
+                    .query_map(params_from_iter(values.iter()), |row| {
+                        row.get::<_, String>(0)
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?)
+            })?;
+            if paths.is_empty() {
+                break;
+            }
+            cursor = paths.last().unwrap().clone();
+            for relative in paths {
+                let tail = if parent.is_empty() {
+                    relative.as_str()
+                } else {
+                    relative.strip_prefix(&lower).unwrap_or_default()
+                };
+                let mut components = Path::new(tail).components();
+                let Some(name) = components.next().and_then(|c| c.as_os_str().to_str()) else {
+                    continue;
+                };
+                if components.next().is_none() {
+                    continue;
+                }
+                // Paths are ordered, so the first 1000 children's counts are complete when child 1001 starts.
+                if !counts.contains_key(name) && counts.len() == 1000 {
+                    truncated = true;
+                    break 'pages;
+                }
+                *counts.entry(name.to_owned()).or_default() += 1;
+            }
+        }
+        let folders = counts
+            .into_iter()
+            .map(|(name, asset_count)| Folder {
+                path: Path::new(parent).join(&name).to_string_lossy().into_owned(),
+                name,
+                parent: (!parent.is_empty()).then(|| parent.to_owned()),
+                asset_count,
+            })
+            .collect();
+        Ok(FolderList {
+            folders,
+            parent: parent.to_owned(),
+            truncated,
         })
     }
 
@@ -493,5 +615,199 @@ mod tests {
         assert_eq!(db.stats().unwrap().total_assets, 5);
         assert_eq!(db.remove_unseen_batch(library.id, 2).unwrap().len(), 5);
         assert!(db.remove_unseen_batch(library.id, 2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn batches_are_atomic_when_an_asset_is_missing_or_tags_overflow() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.sqlite")).unwrap();
+        let library = db
+            .add_library("素材", temp.path().to_str().unwrap())
+            .unwrap();
+        let indexed = db
+            .index_batch(
+                library.id,
+                1,
+                &[record("a.png", 100, 1), record("b.png", 100, 2)],
+            )
+            .unwrap();
+        let ids = indexed
+            .iter()
+            .map(|(asset, _)| asset.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            db.batch_assets(&AssetBatch {
+                ids: ids.clone(),
+                favorite: Some(true),
+                add_tags: Some(vec!["标签".into(), "保留".into()]),
+                remove_tags: None
+            })
+            .unwrap(),
+            2
+        );
+        assert!(
+            db.batch_assets(&AssetBatch {
+                ids: vec![ids[0], 999999],
+                favorite: Some(false),
+                add_tags: None,
+                remove_tags: Some(vec!["保留".into()])
+            })
+            .is_err()
+        );
+        assert!(db.asset(ids[0]).unwrap().favorite);
+        assert!(db.asset(ids[0]).unwrap().tags.contains(&"保留".into()));
+        db.patch_asset(
+            ids[1],
+            &AssetPatch {
+                favorite: None,
+                tags: Some((0..50).map(|i| format!("tag{i}")).collect()),
+            },
+        )
+        .unwrap();
+        assert!(
+            db.batch_assets(&AssetBatch {
+                ids: ids.clone(),
+                favorite: Some(false),
+                add_tags: Some(vec!["新标签".into()]),
+                remove_tags: None
+            })
+            .is_err()
+        );
+        assert!(db.asset(ids[0]).unwrap().favorite);
+        assert!(!db.asset(ids[0]).unwrap().tags.contains(&"新标签".into()));
+        db.batch_assets(&AssetBatch {
+            ids: vec![ids[0]],
+            favorite: Some(false),
+            add_tags: Some(vec!["标签".into()]),
+            remove_tags: Some(vec!["标签".into(), "保留".into()]),
+        })
+        .unwrap();
+        let updated = db.asset(ids[0]).unwrap();
+        assert!(!updated.favorite);
+        assert_eq!(updated.tags, vec!["标签"]);
+    }
+
+    #[test]
+    fn indexed_folder_navigation_counts_descendants_and_filters_exact_subtrees() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.sqlite")).unwrap();
+        let library = db
+            .add_library("素材", temp.path().to_str().unwrap())
+            .unwrap();
+        let paths = [
+            "root.png",
+            "旅行/a.png",
+            "旅行/海边/b.png",
+            "旅行2/c.png",
+            "Travel/d.png",
+            "travel/e.png",
+        ];
+        let records = paths
+            .iter()
+            .map(|path| {
+                let native = path.replace('/', std::path::MAIN_SEPARATOR_STR);
+                record(&native, 100, 1)
+            })
+            .collect::<Vec<_>>();
+        db.index_batch(library.id, 1, &records).unwrap();
+        let root = db.folders(library.id, "").unwrap();
+        assert_eq!(root.folders.len(), 4);
+        assert_eq!(
+            root.folders
+                .iter()
+                .find(|f| f.name == "旅行")
+                .unwrap()
+                .asset_count,
+            2
+        );
+        assert!(!root.truncated);
+        let nested = db.folders(library.id, "旅行").unwrap();
+        assert_eq!(nested.folders.len(), 1);
+        assert_eq!(nested.folders[0].name, "海边");
+        assert_eq!(nested.folders[0].parent.as_deref(), Some("旅行"));
+        assert_eq!(nested.folders[0].asset_count, 1);
+        let filtered = db
+            .assets(&AssetQuery {
+                library_id: Some(library.id),
+                folder: Some("旅行".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(filtered.total, 2);
+        assert_eq!(
+            db.assets(&AssetQuery {
+                library_id: Some(library.id),
+                folder: Some("Travel".into()),
+                ..Default::default()
+            })
+            .unwrap()
+            .total,
+            1
+        );
+        assert_eq!(
+            db.assets(&AssetQuery {
+                library_id: Some(library.id),
+                folder: Some(String::new()),
+                ..Default::default()
+            })
+            .unwrap()
+            .total,
+            6
+        );
+        assert!(db.folders(999999, "").is_err());
+    }
+
+    #[test]
+    fn folder_navigation_limits_sibling_count_without_loading_assets() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.sqlite")).unwrap();
+        let library = db
+            .add_library("素材", temp.path().to_str().unwrap())
+            .unwrap();
+        let mut records = (0..1002)
+            .map(|i| {
+                record(
+                    Path::new(&format!("folder{i:04}"))
+                        .join("asset.png")
+                        .to_str()
+                        .unwrap(),
+                    100,
+                    1,
+                )
+            })
+            .collect::<Vec<_>>();
+        for i in 0..700 {
+            records.push(record(
+                Path::new("folder0999")
+                    .join("nested")
+                    .join(format!("child{i:04}.png"))
+                    .to_str()
+                    .unwrap(),
+                100,
+                1,
+            ));
+        }
+        for records in records.chunks(100) {
+            db.index_batch(library.id, 1, records).unwrap();
+        }
+        let result = db.folders(library.id, "").unwrap();
+        assert_eq!(result.folders.len(), 1000);
+        assert!(result.truncated);
+        assert_eq!(
+            result
+                .folders
+                .iter()
+                .find(|f| f.name == "folder0999")
+                .unwrap()
+                .asset_count,
+            701
+        );
+        assert!(
+            result
+                .folders
+                .iter()
+                .filter(|f| f.name != "folder0999")
+                .all(|folder| folder.asset_count == 1)
+        );
     }
 }

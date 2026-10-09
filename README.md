@@ -1,5 +1,7 @@
 # Picsoc 图片素材库
 
+简体中文 · [English](README.en.md)
+
 Picsoc 是一个在自己电脑或服务器上运行的图片素材库。启动 Rust 服务后，在浏览器打开界面；前端静态文件随程序提供，使用时只需要一个端口。第一版为 0.1.0。
 
 原图保留在现有目录，Picsoc 只读取图片并建立索引。数据库、标签和缩略图存放在独立的数据目录，重启后继续使用。
@@ -8,9 +10,10 @@ Picsoc 是一个在自己电脑或服务器上运行的图片素材库。启动 
 
 - 添加本机目录，递归索引 JPEG、PNG、GIF、WebP、BMP、TIFF 图片。
 - 图片网格按需加载缩略图，浏览、搜索、筛选和查看图片详情。
-- 收藏与标签保存在 SQLite 数据库中。
+- 收藏与标签保存在 SQLite 数据库中；支持多选后批量收藏、添加或移除标签。
+- 按素材库中的子文件夹浏览与递归筛选，只显示已索引且包含图片的目录。
 - 支持中文和英文界面，可在页面中切换语言。
-- 后台扫描生成缩略图；手动重扫以及默认每 300 秒的增量扫描。
+- 后台扫描生成缩略图；支持取消扫描、手动重扫以及默认每 300 秒的增量扫描。
 - 配置 Windows 和 macOS 原生程序、Debian 原生程序与 Docker 的构建及发布流程。
 
 技术栈：Rust、Axum、Tokio、SQLite、React、TypeScript、Vite。SQLite 随程序构建，图片处理使用 Rust `image`，第一版不需要另外安装 Node.js、SQLite 或 libvips。Node.js 只在编译前端时使用。
@@ -26,7 +29,7 @@ Picsoc 是一个在自己电脑或服务器上运行的图片素材库。启动 
 | macOS Intel | `macos-x86_64.tar.gz` | 终端运行 `./picsoc` |
 | Debian x64 | `linux-x86_64.tar.gz` | 终端运行 `./picsoc` |
 
-启动后默认打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)。点击“添加目录”，通过文件夹选择器浏览并选择已有素材文件夹，也可以手动填写绝对路径，例如 Windows 的 `D:\素材`，macOS 的 `/Users/你的用户名/Pictures`，Debian 的 `/home/你的用户名/Pictures`。
+启动后默认打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)。点击“添加素材库”，通过文件夹选择器浏览并选择已有素材文件夹，也可以手动填写绝对路径，例如 Windows 的 `D:\素材`，macOS 的 `/Users/你的用户名/Pictures`，Debian 的 `/home/你的用户名/Pictures`。
 
 文件夹选择器浏览的是运行 Picsoc 服务的机器。原生运行时可选择本机文件夹；通过局域网访问时，选择服务机器上的文件夹。确认添加后，后台扫描读取原图并创建索引和缩略图。
 
@@ -52,7 +55,9 @@ Windows PowerShell 示例：
 .\picsoc.exe --data-dir "$env:LOCALAPPDATA\Picsoc"
 ```
 
-Linux 发行包以 Debian 12 为构建基线；其他 Debian 版本与 Linux 发行版需要在目标机器验证兼容性。Windows、Mac Intel 和 Mac Apple Silicon 分别配置 CI 构建测试，首次跨平台验证需等待 Actions 结果。macOS 发行包当前不包含 Apple 签名和公证；如系统拦截，请通过系统设置的“隐私与安全性”确认允许可信来源的程序运行。
+Linux 发行包以 Debian 12 为构建基线；其他 Debian 版本与 Linux 发行版需要在目标机器验证兼容性。Windows、Mac Intel 和 Mac Apple Silicon 分别配置 CI 构建测试，跨平台检查结果以当前 commit 的 [Actions](https://github.com/xinxiuzhu/Picsoc/actions) 为准。macOS 发行包当前不包含 Apple 签名和公证；如系统拦截，请通过系统设置的“隐私与安全性”确认允许可信来源的程序运行。
+
+Windows x64 构建配置静态 C 运行时，并在 CI 与发行流程检查最终程序的直接 DLL 依赖，以减少额外安装 Visual C++ 运行时的需求。是否通过仍以实际构建检查和目标电脑验证为准。
 
 ## Debian Docker 部署
 
@@ -86,7 +91,7 @@ Linux 发行包以 Debian 12 为构建基线；其他 Debian 版本与 Linux 发
    docker compose up -d --build
    ```
 
-3. 打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)，点击“添加目录”，通过文件夹选择器选择 **`/library`** 或其子文件夹，也可以手动填写 `/library`。
+3. 打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)，点击“添加素材库”，通过文件夹选择器选择 **`/library`** 或其子文件夹，也可以手动填写 `/library`。
 
    容器看到的是 `/library`，不能直接使用宿主机的 `/home/...` 路径。该目录通过只读挂载提供，数据库和缩略图通过 `/data` 持久化。后续重启仍能打开已有索引：
 
@@ -171,6 +176,15 @@ cargo run --locked
 ## 数据备份
 
 停止服务后备份整个数据目录，确保 SQLite 数据库与缩略图一并保留。原图目录需要另外备份。不要在数据库运行中只复制单个 SQLite 文件，以免遗漏 WAL 中尚未合并的内容。恢复时使用备份的数据目录，并保持原图挂载路径与已有索引一致。
+
+## 文档导航
+
+- [使用手册](docs/USERGUIDE.md)：扫描、搜索、子目录、收藏、标签、批量整理和预览。
+- [HTTP API](docs/API.md) 与 [界面语言](docs/I18N.md)。
+- [性能与基准](docs/PERFORMANCE.md)：默认资源策略和限定输入的可复现测试。
+- [运维指南](docs/OPERATIONS.md)：备份、恢复、升级、回滚和 HTTPS 反向代理。
+- [构建与发布](docs/RELEASING.md)、[变更记录](CHANGELOG.md)。
+- [贡献指南](CONTRIBUTING.md) 与 [安全说明](SECURITY.md)。
 
 ## 许可证
 

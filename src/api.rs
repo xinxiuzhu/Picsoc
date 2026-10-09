@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
@@ -28,8 +29,8 @@ use tokio_util::io::ReaderStream;
 
 use crate::{
     db::Db,
-    i18n, media,
-    models::{AssetPatch, AssetQuery},
+    folders, i18n, media,
+    models::{AssetBatch, AssetPatch, AssetQuery},
     scanner::{Scanner, ThumbnailJob},
 };
 
@@ -46,6 +47,7 @@ pub struct AppState {
 #[folder = "frontend/dist/"]
 struct Frontend;
 
+#[derive(Debug)]
 pub struct ApiError(StatusCode, String);
 impl ApiError {
     fn bad(message: impl Into<String>) -> Self {
@@ -106,7 +108,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/libraries/{id}", axum::routing::delete(delete_library))
         .route("/api/libraries/{id}/scan", post(scan))
         .route("/api/libraries/{id}/scan/cancel", post(cancel_scan))
+        .route("/api/libraries/{id}/folders", get(library_folders))
         .route("/api/assets", get(assets))
+        .route("/api/assets/batch", post(batch_assets))
         .route("/api/assets/{id}", get(asset).patch(patch_asset))
         .route("/api/assets/{id}/thumbnail", get(thumbnail))
         .route("/api/assets/{id}/original", get(original))
@@ -518,7 +522,13 @@ async fn assets(
     State(state): State<AppState>,
     query: Result<Query<AssetQuery>, QueryRejection>,
 ) -> Result<Json<crate::models::AssetList>, ApiError> {
-    let Query(query) = query.map_err(|e| ApiError::bad(e.body_text()))?;
+    let Query(mut query) = query.map_err(|e| ApiError::bad(e.body_text()))?;
+    if let Some(folder) = query.folder.as_mut() {
+        if query.library_id.is_none() {
+            return Err(ApiError::bad("按子目录筛选时必须指定素材库"));
+        }
+        *folder = folders::normalize_folder(folder).map_err(|e| ApiError::bad(e.to_string()))?;
+    }
     if query.q.as_ref().is_some_and(|q| q.len() > 1024)
         || query.tag.as_ref().is_some_and(|q| q.len() > 200)
     {
@@ -539,6 +549,74 @@ async fn assets(
         return Err(ApiError::bad("图片格式无效"));
     }
     Ok(Json(blocking(move || state.db.assets(&query)).await?))
+}
+
+#[derive(Deserialize)]
+struct FolderQuery {
+    parent: Option<String>,
+}
+
+async fn library_folders(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    query: Result<Query<FolderQuery>, QueryRejection>,
+) -> Result<Json<crate::models::FolderList>, ApiError> {
+    let Query(query) = query.map_err(|e| ApiError::bad(e.body_text()))?;
+    let parent = folders::normalize_folder(query.parent.as_deref().unwrap_or_default())
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    Ok(Json(blocking(move || state.db.folders(id, &parent)).await?))
+}
+
+fn normalize_batch(mut batch: AssetBatch) -> Result<AssetBatch, ApiError> {
+    batch.ids.sort_unstable();
+    batch.ids.dedup();
+    if batch.ids.is_empty() || batch.ids.len() > 500 || batch.ids.iter().any(|id| *id <= 0) {
+        return Err(ApiError::bad("批量操作需要 1–500 个有效素材 ID"));
+    }
+    for tags in [&mut batch.add_tags, &mut batch.remove_tags]
+        .into_iter()
+        .flatten()
+    {
+        let mut unique = BTreeSet::new();
+        for tag in tags.iter() {
+            let tag = tag.trim();
+            if tag.chars().count() > 50 || tag.contains(['\n', '\r', '\0']) {
+                return Err(ApiError::bad("每个标签最多 50 个字符且不能包含换行"));
+            }
+            if !tag.is_empty() {
+                unique.insert(tag.to_owned());
+            }
+        }
+        *tags = unique.into_iter().collect();
+    }
+    if batch.favorite.is_none()
+        && batch.add_tags.as_ref().is_none_or(|tags| tags.is_empty())
+        && batch
+            .remove_tags
+            .as_ref()
+            .is_none_or(|tags| tags.is_empty())
+    {
+        return Err(ApiError::bad("批量操作至少需要一项变更"));
+    }
+    Ok(batch)
+}
+
+async fn batch_assets(
+    State(state): State<AppState>,
+    body: Result<Json<AssetBatch>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = body.map_err(|e| ApiError::bad(e.body_text()))?;
+    let batch = normalize_batch(body)?;
+    let updated = blocking(move || state.db.batch_assets(&batch))
+        .await
+        .map_err(|e| {
+            if e.1 == "批量操作后每张图片最多 50 个标签" {
+                ApiError::bad(e.1)
+            } else {
+                e
+            }
+        })?;
+    Ok(Json(json!({"updated":updated})))
 }
 async fn asset(
     State(state): State<AppState>,
@@ -996,5 +1074,144 @@ mod tests {
             "Sign in with username picsoc and your configured password."
         );
         assert!(!value.to_string().contains("secret-not-in-response"));
+    }
+
+    #[test]
+    fn batches_validate_and_normalize_ids_and_tags() {
+        let batch = normalize_batch(AssetBatch {
+            ids: vec![2, 1, 2],
+            favorite: None,
+            add_tags: Some(vec![" 标签 ".into(), "标签".into(), "".into()]),
+            remove_tags: None,
+        })
+        .unwrap();
+        assert_eq!(batch.ids, vec![1, 2]);
+        assert_eq!(batch.add_tags.unwrap(), vec!["标签"]);
+        assert!(
+            normalize_batch(AssetBatch {
+                ids: (1..=501).collect(),
+                favorite: Some(true),
+                add_tags: None,
+                remove_tags: None
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_batch(AssetBatch {
+                ids: vec![1],
+                favorite: None,
+                add_tags: Some(vec![" ".into()]),
+                remove_tags: None
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_batch(AssetBatch {
+                ids: vec![1],
+                favorite: None,
+                add_tags: Some(vec!["x".repeat(51)]),
+                remove_tags: None
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_batch(AssetBatch {
+                ids: vec![1],
+                favorite: Some(false),
+                add_tags: None,
+                remove_tags: None
+            })
+            .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_and_folder_errors_use_stable_localized_codes() {
+        use tower::ServiceExt;
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().canonicalize().unwrap();
+        let db = Db::open(&data.join("test.sqlite")).unwrap();
+        let scanner = Scanner::new(db.clone(), data.clone(), 1);
+        let app = router(AppState {
+            db,
+            scanner,
+            data_dir: data,
+            bind: "127.0.0.1:3210".parse().unwrap(),
+            password: None,
+        });
+        for (url, body, code, message) in [
+            (
+                "/api/assets?folder=abc",
+                None,
+                "folder_library_required",
+                "Select a library before filtering by folder.",
+            ),
+            (
+                "/api/assets?library_id=1&folder=..",
+                None,
+                "invalid_folder_path",
+                "The relative library folder path is invalid.",
+            ),
+            (
+                "/api/libraries/1/folders?parent=%2Fabsolute",
+                None,
+                "invalid_folder_path",
+                "The relative library folder path is invalid.",
+            ),
+            (
+                "/api/assets/batch",
+                Some(json!({"ids":[],"favorite":true})),
+                "invalid_batch_ids",
+                "Batch operations require 1–500 valid asset IDs.",
+            ),
+            (
+                "/api/assets/batch",
+                Some(json!({"ids":[1]})),
+                "empty_batch_change",
+                "A batch operation must include at least one change.",
+            ),
+        ] {
+            let mut builder = Request::builder()
+                .uri(url)
+                .header(header::HOST, "127.0.0.1:3210")
+                .header(header::ACCEPT_LANGUAGE, "en");
+            let body = if let Some(body) = body {
+                builder = builder
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json");
+                Body::from(body.to_string())
+            } else {
+                Body::empty()
+            };
+            let response = app
+                .clone()
+                .oneshot(builder.body(body).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let value: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 8192)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(value["code"], code);
+            assert_eq!(value["error"], message);
+        }
+        let request = Request::builder()
+            .uri("/api/assets?folder=abc")
+            .header(header::HOST, "127.0.0.1:3210")
+            .header(header::ACCEPT_LANGUAGE, "zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["error"], "按子目录筛选时必须指定素材库");
+        assert_eq!(value["code"], "folder_library_required");
     }
 }

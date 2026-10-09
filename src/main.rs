@@ -1,5 +1,6 @@
 mod api;
 mod db;
+mod folders;
 mod i18n;
 mod media;
 mod models;

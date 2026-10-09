@@ -214,14 +214,76 @@ class SmokeTest(unittest.TestCase):
         roots = self.request('/api/directories')
         self.assertTrue(roots['roots'])
         result = self.request('/api/directories?path=' + urllib.parse.quote(str(self.library)))
-        self.assertEqual(Path(result['path']), self.library.resolve())
-        self.assertEqual(Path(result['parent']), self.root.resolve())
+        # Rust retains Windows' extended-length prefix; compare filesystem identity.
+        self.assertTrue(Path(result['path']).samefile(self.library))
+        self.assertTrue(Path(result['parent']).samefile(self.root))
         self.assertEqual([item['name'] for item in result['directories']], ['子文件夹'])
         self.assertFalse(result['truncated'])
         with self.assertRaises(urllib.error.HTTPError) as response:
             self.request('/api/directories?path=' + urllib.parse.quote(str(self.outside)))
         self.assertEqual(response.exception.code, 400)
         response.exception.close()
+
+    def test_batch_and_indexed_subfolders(self):
+        nested = self.library / '子文件夹' / '更深目录'
+        nested.mkdir()
+        write_png(nested / '参考.png')
+        originals = {path: path.read_bytes() for path in self.library.rglob('*')
+                     if path.is_file() and not path.is_symlink()}
+        library = self.request('/api/libraries', 'POST', {'name': '批量整理', 'path': str(self.library)})
+        assets = self.wait_scan(library['id'], 4)
+        folders_url = f"/api/libraries/{library['id']}/folders"
+        root = self.request(folders_url)
+        self.assertEqual(root['parent'], '')
+        self.assertFalse(root['truncated'])
+        self.assertEqual([(item['name'], item['asset_count']) for item in root['folders']], [('子文件夹', 2)])
+        child = root['folders'][0]
+        self.assertIsNone(child['parent'])
+        query = urllib.parse.urlencode({'library_id': library['id'], 'folder': child['path']})
+        self.assertEqual(self.request('/api/assets?' + query)['total'], 2)
+        children = self.request(folders_url + '?' + urllib.parse.urlencode({'parent': child['path']}))
+        self.assertEqual(children['parent'], child['path'])
+        self.assertEqual([(item['name'], item['asset_count']) for item in children['folders']], [('更深目录', 1)])
+        deep = children['folders'][0]
+        self.assertEqual(deep['parent'], child['path'])
+        query = urllib.parse.urlencode({'library_id': library['id'], 'folder': deep['path']})
+        self.assertEqual(self.request('/api/assets?' + query)['total'], 1)
+        self.assertEqual(self.request(folders_url + '?' + urllib.parse.urlencode({'parent': deep['path']}))['folders'], [])
+
+        pngs = [item for item in assets if item['format'] == 'png']
+        ids = [item['id'] for item in pngs[:2]]
+        result = self.request('/api/assets/batch', 'POST', {
+            'ids': ids + ids, 'favorite': True, 'add_tags': [' 批量参考 ', '批量参考', '设计']})
+        self.assertEqual(result, {'updated': 2})
+        for asset_id in ids:
+            updated = self.request(f'/api/assets/{asset_id}')
+            self.assertTrue(updated['favorite'])
+            self.assertEqual(set(updated['tags']), {'批量参考', '设计'})
+        self.assertEqual(self.request('/api/assets?favorite=true')['total'], 2)
+        self.request('/api/assets/batch', 'POST', {'ids': ids, 'remove_tags': ['设计', '批量参考'], 'add_tags': ['批量参考']})
+        for asset_id in ids:
+            self.assertEqual(self.request(f'/api/assets/{asset_id}')['tags'], ['批量参考'])
+
+        gif = next(item for item in assets if item['format'] == 'gif')
+        with self.assertRaises(urllib.error.HTTPError) as response:
+            self.request('/api/assets/batch', 'POST', {'ids': [gif['id'], 999999], 'favorite': True, 'add_tags': ['不可部分保存']})
+        self.assertEqual(response.exception.code, 404)
+        response.exception.close()
+        unchanged = self.request(f"/api/assets/{gif['id']}")
+        self.assertFalse(unchanged['favorite'])
+        self.assertEqual(unchanged['tags'], [])
+        for path, body in [
+            ('/api/assets/batch', {'ids': list(range(1, 502)), 'favorite': True}),
+            ('/api/assets/batch', {'ids': ids, 'add_tags': ['长' * 51]}),
+            ('/api/assets/batch', {'ids': ids}),
+            ('/api/assets?folder=..&library_id=' + str(library['id']), None),
+            (folders_url + '?parent=..', None),
+        ]:
+            with self.assertRaises(urllib.error.HTTPError) as response:
+                self.request(path, 'POST' if body is not None else 'GET', body)
+            self.assertEqual(response.exception.code, 400)
+            response.exception.close()
+        self.assertEqual({path: path.read_bytes() for path in originals}, originals)
 
     def test_password_and_origin_guard(self):
         with self.assertRaises(urllib.error.HTTPError) as response:

@@ -12,12 +12,14 @@ Debian 的 Rust 检查和编译在 `rust:1.96.1-bookworm` 容器中完成。Dock
 
 `release.yml` 仅在推送形如 `v0.1.0` 的 tag 时触发，并检查 tag 与 Cargo package version 一致。它会：
 
-1. 在 Windows、macOS Intel 和 macOS Apple Silicon runner 上分别构建、测试；Linux 二进制通过 Dockerfile 的 Debian 12 builder 导出，避免使用 Ubuntu runner 本身的较新 glibc 作为支持基线。
-2. 将可执行程序、Apache 2.0 许可证和中文运行说明打包，生成四个系统/CPU 对应的压缩包及 `SHA256SUMS.txt`。
+1. 在 Windows、macOS Intel 和 macOS Apple Silicon runner 上分别构建、测试；Linux 二进制通过 Dockerfile 的 Debian 12 builder 导出，将 glibc 构建基线固定在 Debian 12，不使用 Ubuntu runner 自身环境构建。
+2. 将可执行程序、Apache 2.0 许可证和中文/英文运行说明打包，生成四个系统/CPU 对应的压缩包及 `SHA256SUMS.txt`。
 3. 通过 GitHub Release 发布附件。
 4. 将 `linux/amd64`、`linux/arm64` Docker 镜像上传至 `ghcr.io/仓库所有者/picsoc`。正式版本获得 `0.1.0` 与 `latest` 标签；带连字符的预发布版本仅获得自身版本标签，不覆盖 `latest`。
 
 Windows 发行包无需 Docker。Debian 可以直接运行二进制或使用镜像；镜像不包含素材文件。Mac Intel 与 Apple Silicon 目前是分别发布的二进制，并非 universal bundle。
+
+Windows x64 MSVC 目标在 `.cargo/config.toml` 中配置 `target-feature=+crt-static`，静态链接 C 运行时。CI 与发行 job 通过 `scripts/verify-windows-runtime.ps1` 查找 Visual Studio 的 `dumpbin.exe`，检查最终二进制不直接依赖 VCRUNTIME、MSVCP、CONCRT、ucrtbase 或 api-ms-win-crt DLL；工具缺失、检查失败或发现依赖都会使 job 失败。该设置参考 [Rust 官方链接说明](https://doc.rust-lang.org/reference/linkage.html#static-and-dynamic-c-runtimes)。仍以实际构建检查及目标电脑运行为准；Windows 自身的系统 DLL 仍是运行要求。
 
 GitHub Release 与 GHCR 上传由独立 job 执行，可能出现其中一个发布成功而另一个失败。检查 Actions 结果后，对失败的 job 重跑；Release 上传支持覆盖同名附件。不要将成功创建 Release 等同于镜像已经上传。
 

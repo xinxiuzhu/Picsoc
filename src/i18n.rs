@@ -33,6 +33,36 @@ pub fn wants_english(headers: &HeaderMap) -> bool {
 // Codes describe conditions, not the current language. Existing clients can continue reading `error`.
 const MESSAGES: &[(&str, &str, &str)] = &[
     (
+        "批量操作需要 1–500 个有效素材 ID",
+        "Batch operations require 1–500 valid asset IDs.",
+        "invalid_batch_ids",
+    ),
+    (
+        "每个标签最多 50 个字符且不能包含换行",
+        "Each tag must contain at most 50 characters and no line breaks.",
+        "invalid_tag",
+    ),
+    (
+        "批量操作至少需要一项变更",
+        "A batch operation must include at least one change.",
+        "empty_batch_change",
+    ),
+    (
+        "批量操作后每张图片最多 50 个标签",
+        "A batch operation cannot leave an image with more than 50 tags.",
+        "too_many_tags",
+    ),
+    (
+        "按子目录筛选时必须指定素材库",
+        "Select a library before filtering by folder.",
+        "folder_library_required",
+    ),
+    (
+        "素材子目录路径无效",
+        "The relative library folder path is invalid.",
+        "invalid_folder_path",
+    ),
+    (
         "素材或目录不存在",
         "The asset or library does not exist.",
         "not_found",

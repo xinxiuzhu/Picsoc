@@ -82,6 +82,42 @@
     "rescan": "Rescan",
     "dismissNotification": "Dismiss notification",
     "languageChinese": "简体中文",
-    "languageEnglish": "English"
+    "languageEnglish": "English",
+    "batch": {
+      "start": "Organize in bulk",
+      "done": "Done selecting",
+      "toolbar": "Bulk actions",
+      "selected_one": "{{formattedCount}} selected",
+      "selected_other": "{{formattedCount}} selected",
+      "limitShort": "Up to {{count}} items",
+      "limit": "You can select up to {{count}} items at once. Selection was kept within that limit.",
+      "selectVisible": "Select visible",
+      "clear": "Clear",
+      "favorite": "Favorite",
+      "unfavorite": "Unfavorite",
+      "tags": "Manage tags",
+      "applying": "Updating assets",
+      "noVisibleAssets": "Visible assets are loading. Try selecting them again in a moment.",
+      "chooseFirst": "Select the assets you want to organize first.",
+      "updated_one": "Updated {{formattedCount}} asset",
+      "updated_other": "Updated {{formattedCount}} assets"
+    },
+    "folders": {
+      "navigation": "Library folders",
+      "breadcrumb": "Current folder location",
+      "allInLibrary": "View all images in this library",
+      "loading": "Loading subfolders",
+      "up": "Up one level",
+      "open": "Open folder {{name}}",
+      "noChildren": "This folder has no subfolders containing images.",
+      "indexedOnly": "Folders containing indexed images appear here.",
+      "collapse": "Show fewer folders",
+      "showAll_one": "View {{formattedCount}} subfolder",
+      "showAll_other": "View all {{formattedCount}} subfolders",
+      "truncated": "Only the first 1,000 subfolders are shown. Open a subfolder to continue browsing its directories."
+    },
+    "cancelScan": "Cancel scan",
+    "scanCanceling": "Canceling…",
+    "scanCancelRequested": "Scan cancellation requested. Images already indexed are kept."
   }
 }

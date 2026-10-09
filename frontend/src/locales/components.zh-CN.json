@@ -59,7 +59,9 @@
       "unfavoriteName": "取消收藏 {{name}}",
       "favoriteName": "收藏 {{name}}",
       "unfavorite": "取消收藏",
-      "favorite": "收藏"
+      "favorite": "收藏",
+      "select": "选择 {{name}}",
+      "unselect": "取消选择 {{name}}"
     },
     "empty": {
       "welcomeEyebrow": "你的私人灵感空间",
@@ -109,6 +111,20 @@
       "relativePath": "相对路径",
       "copyPath": "复制相对路径",
       "copied": "已复制"
+    },
+    "batchTags": {
+      "title": "一起整理这些标签",
+      "intro": "对选中的 {{formattedCount}} 张素材批量应用标签。",
+      "action": "标签操作方式",
+      "add": "添加标签",
+      "remove": "移除标签",
+      "placeholder": "输入标签，按 Enter 添加\n也可以用逗号或换行分隔多个标签",
+      "addHint": "会保留现有标签，并为每张选中素材添加这些标签。每张素材最多 50 个标签，每个标签最多 50 个字符。",
+      "removeHint": "仅移除匹配的标签，其他标签会保留。素材没有这些标签时，会保持原样。",
+      "existingTags": "已有标签",
+      "limitError": "一次最多处理 50 个标签，每个标签最多 50 个字符。请精简后重试。",
+      "applying": "正在应用…",
+      "apply": "应用到选中素材"
     }
   }
 }

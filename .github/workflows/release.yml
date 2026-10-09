@@ -84,6 +84,10 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
           cargo build --locked --release --target ${{ matrix.target }}
+      - name: Verify standalone Windows runtime
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: ./scripts/verify-windows-runtime.ps1 -Binary target/${{ matrix.target }}/release/picsoc.exe
       - name: Exercise native API and persistence
         if: matrix.kind != 'linux'
         shell: bash
@@ -130,6 +134,7 @@ jobs:
           fi
           cp LICENSE "release-packages/$package_name/LICENSE"
           cp docs/RELEASE-README.md "release-packages/$package_name/README.md"
+          cp docs/RELEASE-README.en.md "release-packages/$package_name/README.en.md"
           tar -czf "release-packages/$package_name.tar.gz" -C release-packages "$package_name"
       - name: Package Windows executable
         if: matrix.kind == 'windows'
@@ -148,6 +153,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Executable smoke test failed' }
           Copy-Item LICENSE "$packageDir/LICENSE"
           Copy-Item docs/RELEASE-README.md "$packageDir/README.md"
+          Copy-Item docs/RELEASE-README.en.md "$packageDir/README.en.md"
           Compress-Archive -Path $packageDir -DestinationPath "release-packages/$packageName.zip"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

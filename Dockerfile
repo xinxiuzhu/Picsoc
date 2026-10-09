@@ -24,7 +24,7 @@ RUN groupadd --gid 10001 picsoc \
     && mkdir -p /data /library \
     && chown picsoc:picsoc /data
 COPY --from=backend /build/target/release/picsoc /usr/local/bin/picsoc
-COPY LICENSE README.md /usr/share/doc/picsoc/
+COPY LICENSE README.md README.en.md /usr/share/doc/picsoc/
 ENV PICSOC_BIND=0.0.0.0:3210 \
     PICSOC_DATA_DIR=/data \
     PICSOC_WORKERS=1 \

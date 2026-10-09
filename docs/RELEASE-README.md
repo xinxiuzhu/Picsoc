@@ -1,6 +1,8 @@
 # Picsoc 图片素材库
 
-Picsoc 在本机运行 Rust 服务，通过浏览器提供中文图片素材库。源代码和使用说明：https://github.com/xinxiuzhu/Picsoc
+[English instructions](https://github.com/xinxiuzhu/Picsoc/blob/main/docs/RELEASE-README.en.md)。发行包同时附带离线英文说明 `README.en.md`。
+
+Picsoc 在本机运行 Rust 服务，通过浏览器提供中文/英文图片素材库。源代码和使用说明：https://github.com/xinxiuzhu/Picsoc
 
 ## 启动
 
@@ -13,12 +15,14 @@ Windows：双击 `picsoc.exe`。也可以在 PowerShell 中运行：
 macOS / Debian：在终端切换到解压目录并运行：
 
 ```sh
-./picsoc --data-dir ./picsoc-data
+./picsoc
 ```
 
 程序会打开 http://127.0.0.1:3210 。在界面添加本机图片目录的绝对路径，等待后台扫描生成缩略图。服务需要保持运行，按 `Ctrl+C` 可以停止。关闭浏览器后，可以重新打开上述地址。
 
 Linux 包以 Debian 12 为构建基线，其他版本需要在目标机器验证。macOS 的 Intel 与 Apple Silicon 使用不同发行包；当前 macOS 包未签名或公证，如系统拦截，请在系统设置的“隐私与安全性”中允许可信来源的程序运行。
+
+Windows x64 构建配置静态 C 运行时，并由发行流程检查直接 DLL 依赖；实际运行仍需在目标系统验证。
 
 ## 素材与数据
 

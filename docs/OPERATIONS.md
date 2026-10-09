@@ -1,6 +1,6 @@
 # 运维：备份、恢复、升级与 HTTPS
 
-本文面向运行 Picsoc 服务的人。当前 0.1.0 未正式发布；涉及 GitHub Release / GHCR 版本的升级步骤，在对应版本实际发布成功后使用。首次部署和目录权限设置见 [README](../README.md)。
+本文面向运行 Picsoc 服务的人。使用发行包或 GHCR 镜像前，确认对应附件或版本 tag 已实际生成；源码部署可按选定 commit 构建。首次部署和目录权限设置见 [README](../README.md)。
 
 ## 数据与路径
 

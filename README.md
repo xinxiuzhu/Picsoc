@@ -20,9 +20,9 @@ Picsoc 是一个在自己电脑或服务器上运行的图片素材库。启动 
 
 ## Windows / macOS / Debian 快速开始
 
-首个发行包需要在推送版本 tag 并完成 Actions 后生成。当前可以按下文“从源码开发”启动；发行成功后，从 [GitHub Releases](https://github.com/xinxiuzhu/Picsoc/releases) 下载与你的系统及 CPU 对应的压缩包，解压后启动。计划发布的构建目标如下：
+可按下文“从源码开发”构建运行，也可以从 [GitHub Releases](https://github.com/xinxiuzhu/Picsoc/releases) 下载对应系统及 CPU 的版本附件；先确认附件已生成。容器镜像状态独立于附件，以发布 workflow 的 GHCR job 为准。发行 workflow 的构建目标如下：
 
-| 系统 | 文件 | 启动 |
+| 系统 | 文件名后缀 | 启动 |
 | --- | --- | --- |
 | Windows x64 | `windows-x86_64.zip` | 双击 `picsoc.exe` |
 | macOS Apple Silicon | `macos-aarch64.tar.gz` | 终端运行 `./picsoc` |
@@ -102,7 +102,7 @@ Windows x64 构建配置静态 C 运行时，并在 CI 与发行流程检查最�
 
 停止服务使用 `docker compose down`。数据在宿主机的 `picsoc-data` 中保留。第一次添加目录后，图片会随后台任务逐步出现，导入大量素材时可以继续浏览已完成的部分。
 
-正式版本 tag 发布成功后，可以使用 GHCR 镜像而无需在部署机编译。在 `.env` 添加 `PICSOC_IMAGE=ghcr.io/xinxiuzhu/picsoc:0.1.0`，然后：
+确认所选版本镜像已上传 GHCR 后，可以使用该镜像而无需在部署机编译。在 `.env` 添加 `PICSOC_IMAGE=ghcr.io/xinxiuzhu/picsoc:0.1.0`，然后：
 
 ```sh
 docker compose pull
@@ -181,6 +181,7 @@ cargo run --locked
 
 - [使用手册](docs/USERGUIDE.md)：扫描、搜索、子目录、收藏、标签、批量整理和预览。
 - [HTTP API](docs/API.md) 与 [界面语言](docs/I18N.md)。
+- [架构说明](docs/ARCHITECTURE.md)：数据模型、扫描队列、缓存和扩展边界。
 - [性能与基准](docs/PERFORMANCE.md)：默认资源策略和限定输入的可复现测试。
 - [运维指南](docs/OPERATIONS.md)：备份、恢复、升级、回滚和 HTTPS 反向代理。
 - [构建与发布](docs/RELEASING.md)、[变更记录](CHANGELOG.md)。

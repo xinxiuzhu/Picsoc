@@ -8,7 +8,7 @@ Your original images stay in their existing folders. Picsoc reads and indexes th
 
 ## Version 0.1.0
 
-This is the first version in development. No release tag or official download has been published yet. Source builds are available now; release packages and container images become available only after their tag workflow succeeds. Check [Actions](https://github.com/xinxiuzhu/Picsoc/actions) and [Releases](https://github.com/xinxiuzhu/Picsoc/releases) for their actual status.
+Build from source using the instructions below, or download a matching archive from [GitHub Releases](https://github.com/xinxiuzhu/Picsoc/releases) when its assets are available. Native archives and GHCR images are published by separate jobs; check [Actions](https://github.com/xinxiuzhu/Picsoc/actions) for the outcome of each.
 
 - Add an existing folder using the service's folder picker or an absolute path.
 - Recursively index JPEG, PNG, GIF, WebP, BMP, and TIFF images.
@@ -44,7 +44,7 @@ Click **Add library** and select a folder containing your images, or enter an ab
 
 After scanning, browse a library's indexed subfolders and combine filters. Subfolder filtering includes descendants; empty folders are not listed. Batch actions add/remove tags and change favorites without changing original files. One batch supports up to 500 selected images; it succeeds fully or makes no metadata changes.
 
-## Native packages after the first release
+## Native packages
 
 The configured package targets are:
 
@@ -148,6 +148,7 @@ For upgrades, keep the previous program and a full pre-upgrade data backup. Rest
 
 - [User guide (Chinese)](docs/USERGUIDE.md)
 - [HTTP API](docs/API.md)
+- [Architecture (Chinese)](docs/ARCHITECTURE.md)
 - [Localization](docs/I18N.md)
 - [Performance](docs/PERFORMANCE.md)
 - [Build and release process](docs/RELEASING.md)

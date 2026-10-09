@@ -31,7 +31,7 @@ cargo build --locked
 python3 tests/api_smoke.py --binary target/debug/picsoc
 ```
 
-API smoke 测试自行启动真实服务，使用临时端口和临时素材目录；它不需要已有服务或个人图片。新增 API 行为应补充对应测试和 [API 文档](docs/API.md)。提交前查看 `git diff --check`。
+API smoke 测试自行启动真实服务，使用临时端口和临时素材目录；它不需要已有服务或个人图片。新增 API 行为应补充对应测试和 [API 文档](docs/API.md)。数据与扫描设计见 [架构说明](docs/ARCHITECTURE.md)。提交前查看 `git diff --check`。
 
 ## 文案与界面
 
@@ -51,6 +51,6 @@ Use Rust 1.96.1, Node.js 22, npm, and Python 3.12, matching CI. Build the fronte
 
 For frontend development, run the Rust service on port 3210 and `npm run dev` in a second terminal. The development proxy forwards API requests to that service.
 
-Keep changes within the image/GIF library scope and preserve original files. Add tests and API documentation for new behavior. Translate visible text and accessibility labels in both language dictionaries, keep interpolation variables unchanged, and check both layouts. See [the translation guide](docs/I18N.md).
+Keep changes within the image/GIF library scope and preserve original files. Add tests and API documentation for new behavior; see [the architecture notes (Chinese)](docs/ARCHITECTURE.md) for storage and scanning design. Translate visible text and accessibility labels in both language dictionaries, keep interpolation variables unchanged, and check both layouts. See [the translation guide](docs/I18N.md).
 
 Describe the problem, resulting behavior, and checks you actually ran in the PR. Commit dependency lockfiles, but never personal images, runtime databases, credentials, or `.env`. Contributions are licensed under Apache 2.0. Report security issues through the private process in [SECURITY.md](SECURITY.md).

@@ -26,7 +26,7 @@ Picsoc 当前面向个人使用或可信设备间共享，使用一个服务、�
 
 ## 维护状态
 
-0.1.0 目前处于未发布开发阶段，没有已发布版本的支持周期承诺。修复记录会写入 [CHANGELOG.md](CHANGELOG.md)；正式版本发布状态以 GitHub Releases 和 Actions 为准。
+安全修复记录见 [CHANGELOG.md](CHANGELOG.md)；发行附件与镜像是否可用，分别以 [GitHub Releases](https://github.com/xinxiuzhu/Picsoc/releases) 和发布 workflow 结果为准。
 
 ## English
 
@@ -34,4 +34,4 @@ Picsoc is a personal or trusted-network application with an optional shared Basi
 
 The default native listener and the Docker host port are loopback-only. Host/Origin checks, read-only indexing, symlink exclusions, and decoder limits reduce specific risks; they do not replace authentication, operating-system permissions, or total process memory limits.
 
-Do not disclose exploitable details in public issues. Use **Report a vulnerability** on the [repository Security page](https://github.com/xinxiuzhu/Picsoc/security) if private reporting is enabled. If it is unavailable, open an issue asking only for a private contact channel and withhold the details. No dedicated security email or response deadline is currently published. Include a minimal reproduction and affected version, without personal files or secrets. Version 0.1.0 has not been released.
+Do not disclose exploitable details in public issues. Use **Report a vulnerability** on the [repository Security page](https://github.com/xinxiuzhu/Picsoc/security) if private reporting is enabled. If it is unavailable, open an issue asking only for a private contact channel and withhold the details. No dedicated security email or response deadline is currently published. Include a minimal reproduction and affected version, without personal files or secrets. Security fixes are recorded in [CHANGELOG.md](CHANGELOG.md). Check release assets and publication jobs for distribution availability.

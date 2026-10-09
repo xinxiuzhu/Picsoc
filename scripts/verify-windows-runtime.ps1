@@ -10,19 +10,38 @@ if (-not (Test-Path -LiteralPath $vswhere)) {
     throw 'Cannot verify Windows runtime dependencies: vswhere.exe was not found.'
 }
 
-$installationPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
-if ($LASTEXITCODE -ne 0 -or -not $installationPath) {
-    throw 'Cannot verify Windows runtime dependencies: Visual Studio C++ tools were not found.'
+$installationJson = @(& $vswhere -all -prerelease -products '*' -format json -utf8)
+$vswhereExitCode = $LASTEXITCODE
+if ($vswhereExitCode -ne 0) {
+    throw "Cannot discover Visual Studio installations: vswhere exit code $vswhereExitCode."
 }
-$toolsRoot = Join-Path $installationPath 'VC\Tools\MSVC'
-$toolsVersion = Get-ChildItem -LiteralPath $toolsRoot -Directory |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'bin\Hostx64\x64\dumpbin.exe') } |
-    Sort-Object { [version]$_.Name } -Descending |
-    Select-Object -First 1
-if (-not $toolsVersion) {
-    throw 'Cannot verify Windows runtime dependencies: x64 dumpbin.exe was not found.'
+try {
+    $installations = @(($installationJson -join [Environment]::NewLine) | ConvertFrom-Json)
+} catch {
+    throw "Cannot parse Visual Studio installations: vswhere exit code $vswhereExitCode; $($_.Exception.Message)"
 }
-$dumpbin = Join-Path $toolsVersion.FullName 'bin\Hostx64\x64\dumpbin.exe'
+Write-Output "Visual Studio installation count: $($installations.Count); vswhere exit code: $vswhereExitCode."
+
+# Query actual files instead of assuming a particular component ID or stable VS release.
+# Capture the complete native output before filtering, so the exit code belongs to vswhere.
+$dumpbinCandidates = @(
+    foreach ($installation in $installations) {
+        Write-Host "Visual Studio installation: $($installation.installationPath)"
+        $toolsRoot = Join-Path $installation.installationPath 'VC\Tools\MSVC'
+        if (-not (Test-Path -LiteralPath $toolsRoot -PathType Container)) { continue }
+        foreach ($toolsVersion in @(Get-ChildItem -LiteralPath $toolsRoot -Directory)) {
+            $candidate = Join-Path $toolsVersion.FullName 'bin\Hostx64\x64\dumpbin.exe'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $candidate }
+        }
+    }
+)
+Write-Output "x64 dumpbin candidate count: $($dumpbinCandidates.Count)."
+$dumpbinCandidates | ForEach-Object { Write-Output "x64 dumpbin candidate: $_" }
+if (-not $dumpbinCandidates.Count) {
+    throw "Cannot verify Windows runtime dependencies: no x64 dumpbin.exe found in $($installations.Count) installations; vswhere exit code $vswhereExitCode."
+}
+$dumpbin = $dumpbinCandidates | Sort-Object -Descending | Select-Object -First 1
+Write-Output "Dependency inspector: $dumpbin"
 $dependencies = & $dumpbin /DEPENDENTS $binaryPath
 if ($LASTEXITCODE -ne 0) {
     throw "dumpbin failed while checking $binaryPath."

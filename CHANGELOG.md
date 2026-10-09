@@ -1,8 +1,8 @@
 # 变更记录 / Changelog
 
-## 0.1.0 — 未发布 / Unreleased
+## 0.1.0
 
-当前为首次版本的开发内容，尚未创建正式版本 tag 或发行包。下列记录描述代码中的功能，不代表所有平台与发布流程均已验证；实际构建结果见 [Actions](https://github.com/xinxiuzhu/Picsoc/actions)，发行状态见 [Releases](https://github.com/xinxiuzhu/Picsoc/releases)。
+下列记录描述 0.1.0 代码中的功能。各平台验证见 [Actions](https://github.com/xinxiuzhu/Picsoc/actions)，发行包和容器镜像的可用状态以实际发布结果为准；版本附件见 [Releases](https://github.com/xinxiuzhu/Picsoc/releases)。
 
 - Rust 本地 HTTP 服务与嵌入式 React Web 界面，一个端口即可使用。
 - 从服务机器上的已有文件夹添加素材库，支持文件夹选择与手填绝对路径。
@@ -21,6 +21,6 @@
 
 ### English
 
-The first version is in development; no release tag or official package has been published. It provides an embedded Web interface, read-only image/GIF indexing, folder browsing, search and recursive folder filters, favorites and tags, atomic batch metadata changes, persistent SQLite metadata, cached thumbnails, original downloads, periodic scans, Chinese/English localization, and optional shared-password authentication.
+Version 0.1.0 provides an embedded Web interface, read-only image/GIF indexing, folder browsing, search and recursive folder filters, favorites and tags, atomic batch metadata changes, persistent SQLite metadata, cached thumbnails, original downloads, periodic scans, Chinese/English localization, and optional shared-password authentication.
 
 Cross-platform build and tag-release workflows are configured. Their status must be checked in Actions; source availability is not proof of a successful release. See the README and operations guide for current limits.

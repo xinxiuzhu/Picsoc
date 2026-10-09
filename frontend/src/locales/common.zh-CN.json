@@ -1,0 +1,8 @@
+{
+  "common": {
+    "title": "Picsoc · 图片素材库",
+    "requestFailed": "请求失败（{{status}}）",
+    "serviceUnavailable": "无法连接 Picsoc 服务，请确认程序正在运行。",
+    "unknownError": "出现了未知错误，请重试。"
+  }
+}

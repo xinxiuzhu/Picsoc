@@ -1,0 +1,44 @@
+services:
+  picsoc:
+    image: ${PICSOC_IMAGE:-picsoc:local}
+    build:
+      context: .
+      target: runtime
+    user: "${PICSOC_UID:-10001}:${PICSOC_GID:-10001}"
+    ports:
+      - "${PICSOC_HOST_BIND:-127.0.0.1}:${PICSOC_PORT:-3210}:3210"
+    environment:
+      PICSOC_BIND: "0.0.0.0:3210"
+      PICSOC_DATA_DIR: /data
+      PICSOC_WORKERS: "${PICSOC_WORKERS:-1}"
+      PICSOC_SCAN_INTERVAL: "${PICSOC_SCAN_INTERVAL:-300}"
+      PICSOC_PASSWORD: "${PICSOC_PASSWORD:-}"
+    command: ["--no-open"]
+    volumes:
+      - type: bind
+        source: ${PICSOC_DATA_PATH:-./picsoc-data}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PICSOC_LIBRARY_PATH:-./library}
+        target: /library
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: ${PICSOC_MEMORY_LIMIT:-512m}
+    cpus: ${PICSOC_CPU_LIMIT:-1.0}
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

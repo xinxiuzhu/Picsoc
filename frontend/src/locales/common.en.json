@@ -1,0 +1,8 @@
+{
+  "common": {
+    "title": "Picsoc · Image Library",
+    "requestFailed": "Request failed ({{status}})",
+    "serviceUnavailable": "Cannot connect to Picsoc. Check that the service is running.",
+    "unknownError": "An unexpected error occurred. Please try again."
+  }
+}

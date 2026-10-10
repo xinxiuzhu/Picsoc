@@ -68,6 +68,8 @@ class SmokeTest(unittest.TestCase):
         environment.pop('PICSOC_PASSWORD', None)
         environment.pop('PICSOC_BIND', None)
         environment.pop('PICSOC_DATA_DIR', None)
+        for name in ('PICSOC_MCP_ENABLED', 'PICSOC_PUBLIC_URL', 'PICSOC_MCP_TOKEN', 'PICSOC_MCP_REDIRECT_URIS'):
+            environment.pop(name, None)
         self.authorization = None
         if password:
             environment['PICSOC_PASSWORD'] = password

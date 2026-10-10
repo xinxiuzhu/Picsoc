@@ -82,6 +82,62 @@ export interface BatchChanges {
   remove_tags?: string[];
 }
 
+export interface DesignScene {
+  version: 1;
+  name: string;
+  canvas: { width: number; height: number; background: string };
+  layers: Record<string, unknown>[];
+}
+
+export interface RenderJob {
+  job_id: string;
+  design_id: string;
+  revision: number;
+  quality: 'preview' | 'final';
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  created_at: number;
+  finished_at: number | null;
+  error: string | null;
+  width: number;
+  height: number;
+  output_url: string | null;
+  preview_url: string | null;
+  layout_url: string | null;
+}
+
+export interface StoredDesign {
+  design_id: string;
+  revision: number;
+  created_at: number;
+  name: string;
+  scene: DesignScene;
+  asset_sources: { asset_id: number; cache_key: string }[];
+  latest_job: RenderJob | null;
+}
+
+export interface DesignSummary {
+  design_id: string;
+  revision: number;
+  name: string;
+  updated_at: number;
+  width: number;
+  height: number;
+  layer_count: number;
+  latest_job: RenderJob | null;
+}
+
+export interface DesignFont {
+  id: string;
+  name: string;
+  supports_chinese: boolean;
+}
+
+export interface DesignPage {
+  designs: DesignSummary[];
+  limit: number;
+  offset: number;
+}
+
 export const AUTH_REQUIRED_EVENT = 'picsoc:authentication-required';
 let authGeneration = 0;
 

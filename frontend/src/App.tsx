@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle, ArrowUp, Check, ChevronDown, ChevronRight, Folder, Grid2X2, Grid3X3,
-  HardDrive, Images, LayoutGrid, ListChecks, LoaderCircle, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus,
+  HardDrive, Images, LayoutGrid, ListChecks, LoaderCircle, LogOut, Menu, Paintbrush, PanelLeftClose, PanelLeftOpen, Plus,
   RefreshCw, Search, SlidersHorizontal, Star, Tag, Trash2, X,
 } from 'lucide-react';
 import { api, errorMessage, formatSize } from './api';
@@ -16,6 +16,7 @@ import type { ImageFilters } from './FilterPanel';
 import { LanguageMenu } from './LanguageMenu';
 import { DisplaySettings, getSavedDisplay, saveDisplay } from './DisplaySettings';
 import type { DisplayPreferences } from './DisplaySettings';
+import { DesignStudio } from './DesignStudio';
 
 type Category = 'all' | 'favorites';
 const EMPTY_STATS: Stats = { total_assets: 0, total_size: 0, total_favorites: 0, total_libraries: 0 };
@@ -43,6 +44,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [metadataLoaded, setMetadataLoaded] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [category, setCategory] = useState<Category>('all');
+  const [view, setView] = useState<'assets' | 'designs'>('assets');
   const [libraryId, setLibraryId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -202,7 +204,10 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   useEffect(() => {
     const element = scrollElement.current;
     if (!element) return;
-    const observer = new ResizeObserver(entries => setGridWidth(entries[0].contentRect.width));
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0].contentRect.width;
+      if (width > 0) setGridWidth(width);
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -297,6 +302,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   };
 
   const setScope = (nextCategory: Category, nextLibrary: number | null) => {
+    setView('assets');
     setCategory(nextCategory); setLibraryId(nextLibrary); setSidebarOpen(false);
     setFolder(''); setFolderDirectCount(null);
   };
@@ -311,6 +317,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     setImageFilters({ ...EMPTY_IMAGE_FILTERS });
   };
   const resetFilters = () => {
+    setView('assets');
     clearFilters(); setSort('modified');
     setCategory('all'); setLibraryId(null);
     setFolder(''); setFolderDirectCount(null);
@@ -407,6 +414,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     setFolder(folderTrail[targetIndex]?.path ?? ''); setFolderDirectCount(null);
   };
   const selectFolder = (nextLibrary: number, nextFolder: string, separator: string) => {
+    setView('assets');
     setCategory('all'); setLibraryId(nextLibrary); setFolder(nextFolder);
     setFolderSeparator(separator); setFolderDirectCount(null); setSidebarOpen(false);
   };
@@ -426,21 +434,23 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
       <a className="brand" href="#" onClick={event => { event.preventDefault(); resetFilters(); setSidebarOpen(false); }} aria-label={t('app.brandHome')}><span className="brand-mark"><Images size={23} strokeWidth={1.8} /></span><span>Picsoc<span className="brand-subtitle">{t('app.brandSubtitle')}</span></span></a>
       <div className="sidebar-scroll">
         <nav className="primary-navigation" aria-label={t('app.mainNavigation')}>
-          <button className={`navigation-item ${category === 'all' && libraryId === null ? 'active' : ''}`} aria-current={category === 'all' && libraryId === null ? 'page' : undefined} onClick={() => setScope('all', null)}><LayoutGrid size={18} /><span>{t('app.allAssets')}</span><span className="nav-count">{number(stats.total_assets)}</span></button>
-          <button className={`navigation-item ${category === 'favorites' ? 'active' : ''}`} aria-current={category === 'favorites' ? 'page' : undefined} onClick={() => setScope('favorites', null)}><Star size={18} /><span>{t('app.favorites')}</span><span className="nav-count">{number(stats.total_favorites)}</span></button>
+          <button className={`navigation-item ${view === 'assets' && category === 'all' && libraryId === null ? 'active' : ''}`} aria-current={view === 'assets' && category === 'all' && libraryId === null ? 'page' : undefined} onClick={() => setScope('all', null)}><LayoutGrid size={18} /><span>{t('app.allAssets')}</span><span className="nav-count">{number(stats.total_assets)}</span></button>
+          <button className={`navigation-item ${view === 'assets' && category === 'favorites' ? 'active' : ''}`} aria-current={view === 'assets' && category === 'favorites' ? 'page' : undefined} onClick={() => setScope('favorites', null)}><Star size={18} /><span>{t('app.favorites')}</span><span className="nav-count">{number(stats.total_favorites)}</span></button>
+          <button className={`navigation-item ${view === 'designs' ? 'active' : ''}`} aria-current={view === 'designs' ? 'page' : undefined} onClick={() => { setView('designs'); setSidebarOpen(false); setSelected(null); }}><Paintbrush size={18} /><span>{t('designs.title')}</span></button>
         </nav>
         <section className="sidebar-section"><div className="sidebar-section-heading"><h2>{t('app.libraries')}</h2><button className="icon-button compact" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /></button></div>
-          <div className="library-list">{libraries.map(library => <LibraryTree key={library.id} library={library} active={libraryId === library.id} selectedFolder={libraryId === library.id ? folder : ''} revision={foldersRevision} onSelect={selectFolder} onManage={manage} onSelectedInfo={selectedFolderInfo} onMissingFolder={missingFolder} />)}</div>
+          <div className="library-list">{libraries.map(library => <LibraryTree key={library.id} library={library} active={view === 'assets' && libraryId === library.id} selectedFolder={libraryId === library.id ? folder : ''} revision={foldersRevision} onSelect={selectFolder} onManage={manage} onSelectedInfo={selectedFolderInfo} onMissingFolder={missingFolder} />)}</div>
           {!libraries.length && <p className="sidebar-placeholder">{t('app.noLibraries')}</p>}
           <button className="add-library-link" onClick={() => setShowAdd(true)}><Plus size={15} />{t('app.addLibrary')}</button>
         </section>
-        <section className="sidebar-section tag-section"><div className="sidebar-section-heading"><h2>{t('app.tags')}</h2><Tag size={14} /></div><div className="sidebar-tags">{(showAllTags ? tags : tags.slice(0, 16)).map(tag => <button className={`sidebar-tag ${selectedTag === tag.name ? 'active' : ''}`} key={tag.name} onClick={() => { setSelectedTag(previous => previous === tag.name ? '' : tag.name); setSidebarOpen(false); }}><span className="tag-dot" /><span>{tag.name}</span><span className="nav-count">{number(tag.count)}</span></button>)}</div>{!tags.length && <p className="sidebar-placeholder">{t('app.noTags')}</p>}{tags.length > 16 && <button className="show-tags" onClick={() => setShowAllTags(value => !value)}>{showAllTags ? t('app.collapseTags') : t('app.viewAllTags', { count: tags.length, formattedCount: number(tags.length) })}<ChevronDown size={13} className={showAllTags ? 'rotate' : ''} /></button>}</section>
+        <section className="sidebar-section tag-section"><div className="sidebar-section-heading"><h2>{t('app.tags')}</h2><Tag size={14} /></div><div className="sidebar-tags">{(showAllTags ? tags : tags.slice(0, 16)).map(tag => <button className={`sidebar-tag ${selectedTag === tag.name ? 'active' : ''}`} key={tag.name} onClick={() => { setView('assets'); setSelectedTag(previous => previous === tag.name ? '' : tag.name); setSidebarOpen(false); }}><span className="tag-dot" /><span>{tag.name}</span><span className="nav-count">{number(tag.count)}</span></button>)}</div>{!tags.length && <p className="sidebar-placeholder">{t('app.noTags')}</p>}{tags.length > 16 && <button className="show-tags" onClick={() => setShowAllTags(value => !value)}>{showAllTags ? t('app.collapseTags') : t('app.viewAllTags', { count: tags.length, formattedCount: number(tags.length) })}<ChevronDown size={13} className={showAllTags ? 'rotate' : ''} /></button>}</section>
       </div>
       <div className="sidebar-footer"><span className="storage-icon"><HardDrive size={17} /></span><div><strong>{formatSize(stats.total_size)}</strong><span>{t('app.storageSummary', { count: libraries.length, formattedCount: number(libraries.length) })}</span></div><span className={`connection-dot ${serviceError ? 'disconnected' : ''}`} title={t(serviceError ? 'app.serviceDisconnected' : 'app.serviceConnected')} /></div>
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><div className="topbar-leading"><button className="icon-button sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={sidebarVisible} aria-controls="picsoc-sidebar">{mobileViewport ? <Menu size={21} /> : sidebarCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}</button><span className="topbar-location"><Images size={18} />{t('app.assetSpace')}</span></div><label className="search-field"><Search size={18} /><input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchAssets')} />{!search && <kbd aria-hidden="true">/</kbd>}{search && <button className="icon-button compact" onClick={() => setSearch('')} aria-label={t('app.clearSearch')}><X size={15} /></button>}</label><div className="topbar-actions"><LanguageMenu />{onLogout && <button className="icon-button logout-button" aria-label={t('app.auth.signOut')} title={t('app.auth.signOut')} disabled={logoutBusy} onClick={() => { if (logoutBusy) return; setLogoutBusy(true); void onLogout().catch(cause => notify(errorMessage(cause), true)).finally(() => setLogoutBusy(false)); }}>{logoutBusy ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}</button>}<button className="button primary top-add" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /><span>{t('app.addLibrary')}</span></button></div></header>
+      <header className="topbar"><div className="topbar-leading"><button className="icon-button sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={sidebarVisible} aria-controls="picsoc-sidebar">{mobileViewport ? <Menu size={21} /> : sidebarCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}</button><span className="topbar-location">{view === 'designs' ? <Paintbrush size={18} /> : <Images size={18} />}{t(view === 'designs' ? 'designs.title' : 'app.assetSpace')}</span></div>{view === 'assets' && <label className="search-field"><Search size={18} /><input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchAssets')} />{!search && <kbd aria-hidden="true">/</kbd>}{search && <button className="icon-button compact" onClick={() => setSearch('')} aria-label={t('app.clearSearch')}><X size={15} /></button>}</label>}<div className="topbar-actions"><button className={`icon-button topbar-design-toggle ${view === 'designs' ? 'active' : ''}`} aria-label={t(view === 'designs' ? 'designs.browseAssets' : 'designs.title')} title={t(view === 'designs' ? 'designs.browseAssets' : 'designs.title')} aria-pressed={view === 'designs'} onClick={() => { setView(previous => previous === 'designs' ? 'assets' : 'designs'); setSelected(null); }}>{view === 'designs' ? <Images size={18} /> : <Paintbrush size={18} />}</button><LanguageMenu />{onLogout && <button className="icon-button logout-button" aria-label={t('app.auth.signOut')} title={t('app.auth.signOut')} disabled={logoutBusy} onClick={() => { if (logoutBusy) return; setLogoutBusy(true); void onLogout().catch(cause => notify(errorMessage(cause), true)).finally(() => setLogoutBusy(false)); }}>{logoutBusy ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}</button>}<button className="button primary top-add" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /><span>{t('app.addLibrary')}</span></button></div></header>
+      <div className="asset-workspace-content" hidden={view !== 'assets'}>
       <section className="workspace-heading"><div><h1>{title}<span className="heading-count">{assets.total === null ? '…' : number(assets.total)}</span></h1><p>{activeLibrary ? activeLibrary.path : t(category === 'favorites' ? 'app.favoritesDescription' : 'app.allAssetsDescription')}</p></div><div className="workspace-tools"><button className={`button selection-toggle ${selectionMode ? 'active' : 'secondary'}`} aria-pressed={selectionMode} disabled={batchBusy || (!selectionMode && !assets.total)} onClick={() => { setSelectionMode(value => !value); setSelectedIds(new Set()); setSelected(null); }}><ListChecks size={16} /><span>{t(selectionMode ? 'app.batch.done' : 'app.batch.start')}</span></button></div></section>
       <div className="toolbar"><div className="toolbar-controls"><button className={`button filter-toggle ${filterCount ? 'active' : 'secondary'}`} onClick={() => setShowFilters(true)} aria-haspopup="dialog"><SlidersHorizontal size={15} />{t('app.filters.title')}{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button><label className="select-control sort-select"><select value={sort} onChange={event => setSort(event.target.value)} aria-label={t('app.sortBy')}>{SORT_OPTIONS.map(value => <option key={value} value={value}>{t(SORT_KEYS[value])}</option>)}</select><ChevronDown size={12} /></label><div className="density-controls" role="group" aria-label={t('app.gridDensity')}><button className={display.columns === null && density === 280 ? 'active' : ''} onClick={() => setGridDensity(280)} aria-label={t('app.largeGrid')} aria-pressed={display.columns === null && density === 280} title={t('app.large')}><Grid2X2 size={17} /></button><button className={display.columns === null && density === 220 ? 'active' : ''} onClick={() => setGridDensity(220)} aria-label={t('app.mediumGrid')} aria-pressed={display.columns === null && density === 220} title={t('app.medium')}><LayoutGrid size={17} /></button><button className={display.columns === null && density === 160 ? 'active' : ''} onClick={() => setGridDensity(160)} aria-label={t('app.compactGrid')} aria-pressed={display.columns === null && density === 160} title={t('app.compact')}><Grid3X3 size={17} /></button></div><DisplaySettings preferences={display} columns={columns} onChange={updateDisplay} /><button className="icon-button refresh-button" onClick={() => { assets.refresh(); void loadMetadata(); void loadFolders(); }} aria-label={t('app.refreshList')} title={t('app.refreshList')}><RefreshCw size={16} /></button></div></div>
       {activeLibrary && <section className="folder-navigation" aria-label={t('app.folders.navigation')}>
@@ -481,6 +491,8 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
         </div>}
       </div>
       <footer className="workspace-footer"><span>{assets.total === null ? t('app.readingAssets') : t('app.assetCount', { count: assets.total, formattedCount: number(assets.total) })}{selectedTag ? t('app.filteredTag', { tag: selectedTag }) : ''}</span><span className="footer-message"><HardDrive size={12} />{t('app.footerMotto')}</span></footer>
+      </div>
+      <div className="design-workspace-content" hidden={view !== 'designs'}><DesignStudio active={view === 'designs'} onBrowseAssets={() => setView('assets')} /></div>
     </main>
 
     {showFilters && <FilterPanel filters={imageFilters} format={format} tag={selectedTag} sort={sort} favoriteOnly={favoriteOnly} excludedNames={excludedNames} tags={tags.map(item => item.name)} onClose={() => setShowFilters(false)} onApply={(nextFilters, nextFormat, nextTag, nextSort, nextFavoriteOnly, nextExcludedNames) => { setImageFilters(nextFilters); setFormat(nextFormat); setSelectedTag(nextTag); setSort(nextSort); setFavoriteOnly(nextFavoriteOnly); setExcludedNames(nextExcludedNames); }} />}

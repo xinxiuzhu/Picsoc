@@ -21,6 +21,7 @@ Build from source using the instructions below, or download a matching archive f
 - Scan in the background, cancel an active scan, rescan manually, or use periodic incremental scans (every 300 seconds by default).
 - Use one worker by default and an optional shared password for remote access.
 - Sign in through a simple shared-password page and sign out when finished; without a password, open the library directly.
+- Connect an MCP client to search indexed assets, inspect PNG contact sheets, compose PNG designs with Rust, and save editable layout revisions. Optional OAuth supports ChatGPT through an HTTPS reverse proxy; see the [MCP setup guide](docs/MCP.en.md).
 
 The stack is Rust, Axum, Tokio, bundled SQLite, React, TypeScript, and Vite. Image processing uses the Rust `image` crate. Native runtime packages need no separate Node.js, SQLite, or libvips installation; Node.js is used to build the frontend.
 
@@ -174,6 +175,7 @@ For upgrades, keep the previous program and a full pre-upgrade data backup. Rest
 
 - [User guide (Chinese)](docs/USERGUIDE.md)
 - [HTTP API](docs/API.md)
+- [MCP and PNG design workflow](docs/MCP.en.md)
 - [Architecture (Chinese)](docs/ARCHITECTURE.md)
 - [Localization](docs/I18N.md)
 - [Performance](docs/PERFORMANCE.md)

@@ -25,8 +25,17 @@
 | GET | `/api/assets/{id}/thumbnail` | 返回磁盘缓存的 PNG；首次访问可能等待生成，无法解码时返回 SVG 占位图 |
 | GET | `/api/assets/{id}/original` | 流式返回原文件，GIF 保留动画，支持单段 `Range` 请求 |
 | GET | `/api/tags` | `{tags: [{name, count}]}` |
+| GET | `/api/design-fonts` | `{fonts: [{id, name, supports_chinese}]}`，查询服务启动时加载的字体 |
+| GET | `/api/designs?limit=50&offset=0` | `{designs: DesignSummary[], limit, offset}`，最新修改优先 |
+| POST | `/api/designs` | 传入 `SaveDesign`，新建布局或保存新版本，返回 `StoredDesign` 和 `200` |
+| GET | `/api/designs/{design_id}?revision=1` | 获取指定布局版本；省略 revision 获取最新版本 |
+| POST | `/api/designs/{design_id}/render` | 传入 `{revision?: number, quality: "preview" \| "final"}`，返回已入队的 `RenderJob` 和 `200` |
+| GET | `/api/design-jobs/{job_id}` | 获取合成状态与成功后的下载地址 |
+| GET | `/api/design-jobs/{job_id}/output.png` | 下载该任务的 PNG，预览任务输出较小画布，final 任务输出原画布尺寸 |
+| GET | `/api/design-jobs/{job_id}/preview.png` | 查看该任务的预览 PNG，最长边不超过 1280 |
+| GET | `/api/design-jobs/{job_id}/layout.json` | 下载该任务使用的 `StoredDesign`，含 scene 和素材版本记录 |
 
-失败响应通常是 `{error: string, code: string}`，配合 `400`、`401`、`403`、`404` 或 `500` 状态码。`code` 是稳定的错误标识；说明语言通过请求的 `Accept-Language` 选择（`zh-CN` 或 `en`，默认中文）。素材、目录与标签的原名称不参与翻译。请求体限制为 64 KiB。不存在的 API 返回 `404`。
+失败响应通常是 `{error: string, code: string}`，配合 `400`、`401`、`403`、`404`、`409`、`429` 或 `500` 状态码。`code` 是稳定的错误标识；说明语言通过请求的 `Accept-Language` 选择（`zh-CN` 或 `en`，默认中文）。素材、目录与标签的原名称不参与翻译。通常请求体限制为 64 KiB；`POST /api/designs` 限制为 256 KiB。不存在的 API 返回 `404`。
 
 ## 浏览器登录
 
@@ -131,6 +140,72 @@
 例如：`/api/assets?library_id=1&folder=%E5%8F%82%E8%80%83&folder_recursive=true&aspect_ratio=16%3A9&min_width=1920&sort=pixels&limit=100`。参数可以组合使用，分页 `total` 与返回素材应用相同条件。相同排序值通过素材 ID 保持稳定顺序；未知尺寸不匹配方向、比例或像素范围。非法枚举、比例、负数、反转范围或未指定库的目录范围返回 `400`。
 
 例如 `exclude_names=map%0Anormal` 同时排除文件名包含 `map` 或 `normal` 的图片。排除词去除首尾空白、空项和重复项；总 UTF-8 长度不超过 4096 字节，最多 50 项，每项最多 100 个 Unicode 字符，超限返回 400。空字符串不筛选。排除条件与其他条件共同参与计数和分页，不删除素材或修改原文件。
+
+## 设计布局与 PNG 合成
+
+设计 HTTP API 沿用网页 Cookie/Basic Auth；MCP OAuth/Bearer 凭据只用于 `/mcp`，不能代替网页登录下载成品。`design_id` 为 `d_` 加 32 个小写十六进制字符，`job_id` 为 `j_` 加同样长度的后缀；接口不接受任意输出路径。
+
+新建布局传入以下 `SaveDesign`。素材编号应从 `/api/assets` 或 MCP 搜索取得，示例中的 `42` 需要替换为实际编号：
+
+```json
+{
+  "scene": {
+    "version": 1,
+    "name": "登录页面",
+    "canvas": {"width": 1920, "height": 1080, "background": "#101B30"},
+    "layers": [
+      {"type": "image", "asset_id": 42, "x": 120, "y": 180, "width": 1680, "height": 700, "fit": "contain", "opacity": 1},
+      {"type": "rect", "x": 760, "y": 850, "width": 400, "height": 80, "color": "#007AFF", "radius": 20},
+      {"type": "text", "text": "星海", "x": 560, "y": 100, "font_size": 72, "color": "#FFFFFF", "font_id": "default", "max_width": 800, "align": "center"}
+    ]
+  }
+}
+```
+
+图层按数组顺序从底到顶绘制，坐标以原始画布左上角为原点，超出画布的部分被裁去。画布宽高均为 1–4096，总像素最多 16,777,216；最多 64 个图层。背景和颜色支持 `transparent`、`#RRGGBB`、`#RRGGBBAA`；`opacity` 为 0–1，默认 1。布局 `version` 默认且仅支持 1，名称须有内容且最多 120 个 Unicode 字符，未知字段会被拒绝。
+
+图像与矩形图层宽高为 1–4096，所有图层坐标为 -8192–8192。图像 `fit` 默认 `contain`，等比完整放入目标框并居中；`cover` 等比填满目标框并裁去超出部分，`stretch` 按目标框宽高缩放。GIF 在合成中使用首帧。矩形 `radius` 默认为 0，不能超过短边一半。
+
+文字 `font_size` 为 4–512，`font_id` 为字体接口返回的编号或 `default`。默认字体自动选择能覆盖全部所需字符的已加载字体；找不到完整字形会返回 `400`，不会静默输出方框。每层文字最多 1024 字符，布局文字总计最多 4096；支持显式换行、按 `max_width` 换行、`left`/`center`/`right` 对齐和 `line_height` 倍数（0.5–4，默认 1.2）。`max_width` 默认使用画布宽度。当前使用字形绘制与基础字距处理，没有复杂文字塑形或完整排版引擎。
+
+`StoredDesign` 包含 `{design_id, revision, created_at, name, scene, asset_sources, latest_job}`；`asset_sources` 是 `{asset_id, cache_key}` 数组，用于检测素材版本变化。新设计 revision 为 1，修改设计时必须同时提交 `design_id`、等于当前版本的 `expected_revision` 和完整 `scene`。匹配成功会写入新版本，旧版本保留；缺失或过期的 `expected_revision` 返回 `409`。每个设计最多 10,000 个版本。下载的 layout.json 是完整 StoredDesign，继续修改时使用其中的 scene，并按最新版本提交 expected_revision。
+
+渲染必须引用已保存设计。HTTP 渲染请求必须显式传入 `quality`；`revision` 可省略以选择最新版本：
+
+```json
+{"revision": 1, "quality": "preview"}
+```
+
+`preview` 将最长边缩小至不超过 1280，`final` 使用完整画布；两者均生成 PNG 和可下载布局。服务使用一个独立渲染线程，最多等待 4 个任务；队列满返回 `429`，不创建有效任务。入队响应的 `status` 为 `queued`，之后可能成为 `running`、`succeeded` 或 `failed`，应稍作间隔再请求任务状态。重启后保留已完成成品，未完成任务标记为 failed，需要重新提交。
+
+任务成功后 `output_url`、`preview_url`、`layout_url` 为相对路径，例如 `/api/design-jobs/j_0123456789abcdef0123456789abcdef/output.png`；成功前它们为 null。`RenderJob` 还包含 `design_id`、`revision`、`quality`、`created_at`、`finished_at`、`error`、输出 `width` 和 `height`。成功前访问成品文件返回 `409`，未知文件名返回 `400`。输出 PNG 保留透明通道，原素材不会被改写。
+
+素材在保存后发生变化、删除或改名，旧布局可能无法再次渲染；服务通过已索引版本与实际文件 metadata 检查，避免静默替换内容。重新读取素材并保存新布局版本后再渲染。已经完成的 PNG 独立于原素材保留。
+
+原始 TTF/OTF/TTC 字体可以放入数据目录的 `fonts` 下，重启后加载；工具不能传入任意字体路径。使用 `/api/design-fonts` 确认实际可用字体，`supports_chinese` 是样例字形检测，保存布局还会逐字确认所需字符。原生 Debian 可安装 `fonts-wqy-zenhei` 和 `fonts-dejavu-core`；Docker 运行镜像包含这两种字体。系统和用户字体总加载预算为 64 MiB，用户目录按路径排序后只检查前 8 项。
+
+## MCP 接口
+
+MCP 使用独立路由和鉴权，默认关闭，通过 `--mcp` 或 `PICSOC_MCP_ENABLED=true` 明确启用。`POST /mcp` 接收单个 JSON-RPC 2.0 消息，支持 `initialize`、`ping`、`tools/list`、`tools/call`；通知成功返回无内容的 `202`。请求需声明 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，有认证的 `GET`/`DELETE /mcp` 返回 `405`（本实现不提供 SSE 或 session）。单次 MCP 请求限制为 1 MiB。
+
+当前支持 `2025-03-26`、`2025-06-18`、`2025-11-25`，初始化会协商版本；后续 `MCP-Protocol-Version` 不能指定不支持的版本。不会通过 MCP 暴露任意文件系统、命令执行或 Rust 编译。
+
+| 工具 | 主要输入和行为 |
+| --- | --- |
+| `list_libraries` | 无输入，返回已索引库的编号、名称与数量 |
+| `get_library_folders` | `library_id`，可选 `parent`/`cursor`；每页 200 个直属目录 |
+| `search_assets` | 使用素材搜索参数；默认 24、最多 50 项，返回候选元数据而非视觉语义搜索结果 |
+| `preview_assets` | `asset_ids`，1–24 个不重复正整数；返回有编号的实际 PNG 拼版及 missing 列表 |
+| `get_fonts` | 无输入，返回实际加载的字体 |
+| `list_designs` | 可选 `limit`/`offset`，默认 50、最多 100 项 |
+| `get_design` | `design_id`，可选 `revision`；返回可继续编辑的布局 |
+| `save_design` | `SaveDesign`；保存新设计或匹配 expected_revision 的新版本 |
+| `render_design` | `design_id`，可选 `revision`/`quality`，MCP 的 quality 默认 preview；返回入队任务 |
+| `get_render` | `job_id`；返回任务状态，成功时附实际预览 PNG、布局及相对下载路径 |
+
+工具成功结果带 `structuredContent` 与文本 `content`，预览工具还带标准 `type: "image"`、`mimeType: "image/png"` 和 base64 像素。合成业务失败通过工具结果 `isError: true` 报告；JSON-RPC 参数/方法错误通过 error 报告。只读授权可以查询、预览，保存和渲染要求写权限。
+
+OAuth 发现位于 `/.well-known/oauth-protected-resource/mcp`（及无路径兼容地址）与 `/.well-known/oauth-authorization-server`，注册/授权/token/revoke 分别为 `/oauth/register`、`/oauth/authorize`、`/oauth/token`、`/oauth/revoke`。未认证的 MCP 401 携带发现地址。OAuth 输入限制为 16 KiB。部署、精确回调、S256 PKCE、作用域和令牌重启行为见 [MCP 部署说明](MCP.md) / [English guide](MCP.en.md)。
 
 ## 验证
 

@@ -20,7 +20,10 @@ FROM scratch AS binary
 COPY --from=backend /build/target/release/picsoc /picsoc
 
 FROM debian:bookworm-slim AS runtime
-RUN groupadd --gid 10001 picsoc \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-wqy-zenhei fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 picsoc \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /data picsoc \
     && mkdir -p /data /library \
     && chown picsoc:picsoc /data

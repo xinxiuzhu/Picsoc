@@ -1,8 +1,12 @@
 mod api;
 mod auth;
 mod db;
+mod design;
 mod folders;
 mod i18n;
+mod mcp;
+mod mcp_auth;
+mod mcp_tools;
 mod media;
 mod models;
 mod network;
@@ -39,6 +43,26 @@ struct Args {
         help = "增量扫描间隔（秒），0 为关闭周期扫描"
     )]
     scan_interval: u64,
+    #[arg(
+        long,
+        env = "PICSOC_MCP_ENABLED",
+        default_value_t = false,
+        help = "启用 MCP 素材与设计接口（需配置独立授权）"
+    )]
+    mcp: bool,
+    #[arg(
+        long,
+        env = "PICSOC_PUBLIC_URL",
+        help = "反向代理的 HTTPS 根地址，用于 MCP OAuth 发现"
+    )]
+    public_url: Option<String>,
+    #[arg(
+        long,
+        env = "PICSOC_MCP_REDIRECT_URIS",
+        value_delimiter = ',',
+        help = "额外允许的 OAuth 完整回调地址（逗号分隔）"
+    )]
+    mcp_redirect_uris: Vec<String>,
 }
 
 fn default_data_dir() -> Result<PathBuf> {
@@ -77,15 +101,34 @@ async fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
+    let public_url = args.public_url.filter(|value| !value.trim().is_empty());
+    let mcp_redirect_uris: Vec<_> = args
+        .mcp_redirect_uris
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect();
     let data_dir = args.data_dir.map_or_else(default_data_dir, Ok)?;
     std::fs::create_dir_all(&data_dir).context("无法创建数据目录")?;
     let data_dir = data_dir.canonicalize()?;
     let database = db::Db::open(&data_dir.join("picsoc.sqlite3"))?;
     let scanner = scanner::Scanner::new(database.clone(), data_dir.clone(), args.workers.into());
+    let designs = design::DesignService::new(database.clone(), data_dir.clone())?;
     let password = std::env::var("PICSOC_PASSWORD")
         .ok()
         .filter(|p| !p.is_empty())
         .map(Arc::<str>::from);
+    let mcp_token = std::env::var("PICSOC_MCP_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(Arc::<str>::from);
+    let mcp_auth = Arc::new(mcp_auth::McpAuth::new(
+        args.mcp,
+        password.clone(),
+        mcp_token,
+        public_url.as_deref(),
+        &mcp_redirect_uris,
+        data_dir.join("mcp-oauth.json"),
+    )?);
     let listener = tokio::net::TcpListener::bind(args.bind)
         .await
         .context("监听端口失败，可能已有 Picsoc 实例在运行")?;
@@ -95,7 +138,8 @@ async fn main() -> Result<()> {
         scanner: scanner.clone(),
         data_dir: data_dir.clone(),
         bind,
-        auth: auth::Auth::new(password),
+        auth: auth::Auth::new(password.clone()),
+        designs: designs.clone(),
     };
     let url = network::local_url(bind);
     println!(
@@ -158,7 +202,29 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_secs(args.scan_interval)).await;
         }
     });
-    axum::serve(listener, api::router(state))
+    if mcp_auth.enabled() {
+        println!(
+            "MCP：{}",
+            mcp_auth.endpoint().unwrap_or_else(|| format!("{url}/mcp"))
+        );
+        println!(
+            "MCP 授权：{}",
+            if mcp_auth.oauth_enabled() {
+                "OAuth（使用 Picsoc 密码授权）"
+            } else {
+                "独立 Bearer token"
+            }
+        );
+    }
+    let app = api::router(state).merge(mcp::router(mcp::McpState {
+        auth: mcp_auth,
+        tools: Arc::new(mcp_tools::PicsocTools {
+            db: database.clone(),
+            designs,
+            public_url,
+        }),
+    }));
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     for library in database.libraries()? {

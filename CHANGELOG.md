@@ -2,6 +2,12 @@
 
 ## 未发布 / Unreleased
 
+- 新增可选 MCP Streamable HTTP 服务，提供素材库与目录查询、搜索、带编号的实际图片拼版、字体查询和设计布局/合成工具；默认关闭，网页登录与 MCP 授权独立。
+- 支持用于 ChatGPT 的 OAuth 发现、精确回调白名单、S256 PKCE、单次授权码、短期访问令牌和 refresh 轮转；凭据只持久化哈希，支持重启后继续授权。独立 Bearer token 用于支持该方式的本地/API 客户端。
+- 新增 Rust PNG 合成：素材图层、矩形/圆角矩形和文字图层，透明通道、缩放模式、文字换行与对齐；单渲染线程与有界队列，先预览再导出原画布尺寸。
+- 布局保存为不可变 JSON 版本，更新需匹配 `expected_revision`，避免覆盖他人修改；已保存布局和合成成品可继续查看、下载和修改，原素材保持只读。
+- Add an opt-in MCP server with independent OAuth/Bearer authentication, actual image previews, bounded Rust PNG composition, and persistent editable layout revisions. Server deployment and authorization in a ChatGPT account remain explicit setup steps.
+
 - 左侧目录树与扫描跳过 `.git` 等隐藏点目录，保留普通空目录；旧隐藏素材在成功重扫后清理索引，原文件保留。
 - 支持桌面侧栏收起/展开和独立的手机抽屉；新增每行缩略图数量调节，图片保持完整显示，浏览器记住偏好。
 - Skip hidden dot-directories and add persistent sidebar and thumbnail display controls, while preserving virtualized browsing.

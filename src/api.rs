@@ -28,6 +28,7 @@ use tokio_util::io::ReaderStream;
 use crate::{
     auth::{self, Auth, AuthStatus, LoginError},
     db::Db,
+    design::{DesignService, RenderRequest, SaveDesign},
     folders, i18n, media,
     models::{AssetBatch, AssetPatch, AssetQuery},
     scanner::{Scanner, ThumbnailJob},
@@ -40,6 +41,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub bind: SocketAddr,
     pub auth: Auth,
+    pub designs: DesignService,
 }
 
 #[derive(rust_embed::RustEmbed)]
@@ -117,6 +119,17 @@ pub fn router(state: AppState) -> Router {
         .route("/api/assets/{id}/thumbnail", get(thumbnail))
         .route("/api/assets/{id}/original", get(original))
         .route("/api/tags", get(tags))
+        .route(
+            "/api/designs",
+            get(designs)
+                .post(save_design)
+                .layer(DefaultBodyLimit::max(256 * 1024)),
+        )
+        .route("/api/designs/{id}", get(design))
+        .route("/api/designs/{id}/render", post(render_design))
+        .route("/api/design-jobs/{id}", get(design_job))
+        .route("/api/design-jobs/{id}/{file}", get(design_file))
+        .route("/api/design-fonts", get(design_fonts))
         .fallback(frontend)
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
@@ -728,6 +741,120 @@ async fn tags(State(state): State<AppState>) -> Result<Json<serde_json::Value>, 
     Ok(Json(json!({"tags":blocking(move||state.db.tags()).await?})))
 }
 
+#[derive(Default, Deserialize)]
+struct DesignListQuery {
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Default, Deserialize)]
+struct DesignRevisionQuery {
+    revision: Option<u64>,
+}
+
+async fn design_work<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "设计服务暂不可用".into()))?
+        .map_err(|error| {
+            let status = crate::design::error_status(&error);
+            ApiError(
+                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                error.to_string(),
+            )
+        })
+}
+
+async fn designs(
+    State(state): State<AppState>,
+    query: Result<Query<DesignListQuery>, QueryRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::bad("请求参数无效"))?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let offset = query.offset.unwrap_or(0);
+    let items = design_work(move || state.designs.list(limit, offset)).await?;
+    Ok(Json(json!({"designs":items,"limit":limit,"offset":offset})))
+}
+
+async fn save_design(
+    State(state): State<AppState>,
+    body: Result<Json<SaveDesign>, JsonRejection>,
+) -> Result<Json<crate::design::StoredDesign>, ApiError> {
+    let Json(body) = body.map_err(|_| ApiError::bad("设计布局 JSON 无效"))?;
+    Ok(Json(design_work(move || state.designs.save(body)).await?))
+}
+
+async fn design(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    query: Result<Query<DesignRevisionQuery>, QueryRejection>,
+) -> Result<Json<crate::design::StoredDesign>, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::bad("请求参数无效"))?;
+    Ok(Json(
+        design_work(move || state.designs.get(&id, query.revision)).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesignRenderBody {
+    revision: Option<u64>,
+    quality: crate::design::RenderQuality,
+}
+
+async fn render_design(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<DesignRenderBody>, JsonRejection>,
+) -> Result<Json<crate::design::RenderJob>, ApiError> {
+    let Json(body) = body.map_err(|_| ApiError::bad("设计渲染参数无效"))?;
+    let request = RenderRequest {
+        design_id: id,
+        revision: body.revision,
+        quality: body.quality,
+    };
+    Ok(Json(
+        design_work(move || state.designs.submit(request)).await?,
+    ))
+}
+
+async fn design_job(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::design::RenderJob>, ApiError> {
+    Ok(Json(design_work(move || state.designs.job(&id)).await?))
+}
+
+async fn design_fonts(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({"fonts":state.designs.fonts()}))
+}
+
+async fn design_file(
+    State(state): State<AppState>,
+    Path((id, file)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let file_copy = file.clone();
+    let id_copy = id.clone();
+    let path = design_work(move || state.designs.output_path(&id_copy, &file_copy)).await?;
+    let mime = if file == "layout.json" {
+        "application/json"
+    } else {
+        "image/png"
+    };
+    let mut response =
+        stream_file(path, mime, &format!("\"{id}-{file}\""), &headers, false).await?;
+    if file != "preview.png" {
+        response.headers_mut().insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_str(&format!("attachment; filename=\"{file}\"")).unwrap(),
+        );
+    }
+    Ok(response)
+}
+
 async fn thumbnail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1065,6 +1192,7 @@ mod tests {
         let db = Db::open(&data.join("test.sqlite")).unwrap();
         let scanner = Scanner::new(db.clone(), data.clone(), 1);
         let app = router(AppState {
+            designs: DesignService::new(db.clone(), data.clone()).unwrap(),
             db: db.clone(),
             scanner: scanner.clone(),
             data_dir: data,
@@ -1156,6 +1284,7 @@ mod tests {
         let db = Db::open(&data.join("test.sqlite")).unwrap();
         let scanner = Scanner::new(db.clone(), data.clone(), 1);
         let app = router(AppState {
+            designs: DesignService::new(db.clone(), data.clone()).unwrap(),
             db,
             scanner,
             data_dir: data,
@@ -1202,6 +1331,7 @@ mod tests {
         let db = Db::open(&data.join("test.sqlite")).unwrap();
         let scanner = Scanner::new(db.clone(), data.clone(), 1);
         let state = AppState {
+            designs: DesignService::new(db.clone(), data.clone()).unwrap(),
             db,
             scanner,
             data_dir: data,
@@ -1330,6 +1460,7 @@ mod tests {
         let db = Db::open(&data.join("test.sqlite")).unwrap();
         let scanner = Scanner::new(db.clone(), data.clone(), 1);
         let app = router(AppState {
+            designs: DesignService::new(db.clone(), data.clone()).unwrap(),
             db,
             scanner,
             data_dir: data,
@@ -1418,6 +1549,7 @@ mod tests {
         let db = Db::open(&data.join("auth.sqlite")).unwrap();
         let scanner = Scanner::new(db.clone(), data.clone(), 1);
         let app = router(AppState {
+            designs: DesignService::new(db.clone(), data.clone()).unwrap(),
             db,
             scanner,
             data_dir: data,

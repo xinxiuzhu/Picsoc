@@ -310,6 +310,7 @@ export function AssetPreview({ asset: initialAsset, library, index, total, onClo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigationRef = useRef(onNavigate);
   navigationRef.current = direction => { if (!busy) onNavigate(direction); };
@@ -322,6 +323,7 @@ export function AssetPreview({ asset: initialAsset, library, index, total, onClo
     setTagInput('');
     setError(null);
     setCopied(false);
+    setCopiedId(false);
     const controller = new AbortController();
     void api<Asset>(`/api/assets/${initialAsset.id}`, { signal: controller.signal }).then(result => {
       setAsset(result); setTags(result.tags);
@@ -362,23 +364,23 @@ export function AssetPreview({ asset: initialAsset, library, index, total, onClo
     setTags(next); setTagInput('');
     return next;
   };
-  const copyPath = async () => {
+  const copyValue = async (value: string, isId = false) => {
     setError(null);
     try {
       if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(asset.relative_path);
+        await navigator.clipboard.writeText(value);
       } else {
         const field = document.createElement('textarea');
-        field.value = asset.relative_path;
+        field.value = value;
         field.style.position = 'fixed'; field.style.opacity = '0';
         document.body.appendChild(field); field.select();
         const successful = document.execCommand('copy');
         field.remove();
         if (!successful) throw new Error(t('components.preview.clipboardError'));
       }
-      setCopied(true);
+      setCopied(!isId); setCopiedId(isId);
       if (copyTimer.current) clearTimeout(copyTimer.current);
-      copyTimer.current = setTimeout(() => setCopied(false), 2000);
+      copyTimer.current = setTimeout(() => { setCopied(false); setCopiedId(false); }, 2000);
     } catch (cause) { setError(errorMessage(cause)); }
   };
   const dirty = tags.join('\0') !== asset.tags.join('\0') || tagInput.trim().length > 0;
@@ -401,7 +403,8 @@ export function AssetPreview({ asset: initialAsset, library, index, total, onClo
       {isTiff && <p className="quiet-note">{t('components.preview.tiffHint')}</p>}
       <div className="detail-section"><h3>{t('components.preview.fileInfo')}</h3><dl className="metadata"><div><dt>{t('components.preview.format')}</dt><dd>{asset.format.toUpperCase()}</dd></div><div><dt>{t('components.preview.dimensions')}</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : t('components.preview.dimensionsPending')}</dd></div><div><dt>{t('components.preview.fileSize')}</dt><dd>{formatSize(asset.size)}</dd></div><div><dt>{t('components.preview.modifiedDate')}</dt><dd>{formatDate(asset.modified_at)}</dd></div></dl></div>
       <div className="detail-section"><div className="section-heading"><h3>{t('components.preview.tags')}</h3><span>{tags.length}</span></div><div className="editable-tags">{tags.map(tag => <span className="tag-chip" key={tag}>{tag}<button onClick={() => setTags(tags.filter(item => item !== tag))} disabled={busy} aria-label={t('components.preview.removeTag', { tag })}><X size={12} /></button></span>)}{!tags.length && <span className="no-tags">{t('components.preview.noTags')}</span>}</div><form className="add-tag-form" onSubmit={event => { event.preventDefault(); addTags(); }}><input aria-label={t('components.preview.newTag')} value={tagInput} onChange={event => setTagInput(event.target.value)} placeholder={t('components.preview.tagPlaceholder')} maxLength={200} disabled={busy} /><button type="submit" className="icon-button" disabled={busy || !tagInput.trim()} aria-label={t('components.preview.addTag')}><Plus size={16} /></button></form><button className="button save-tags" disabled={!dirty || busy} onClick={() => void patch({ tags: addTags() })}>{busy ? <LoaderCircle size={14} className="spin" /> : <Check size={14} />}{t('components.preview.saveTags')}</button></div>
-      <div className="detail-section"><div className="section-heading"><h3>{t('components.preview.relativePath')}</h3><button className="icon-button compact" onClick={() => void copyPath()} aria-label={t('components.preview.copyPath')} title={t('components.preview.copyPath')}>{copied ? <Check size={15} /> : <Copy size={15} />}</button></div><p className="file-path">{asset.relative_path}</p>{copied && <span className="copy-feedback" role="status">{t('components.preview.copied')}</span>}</div>
+      <div className="detail-section asset-id-section"><div className="section-heading"><h3>{t('designs.assetId')}</h3><button className="icon-button compact" onClick={() => void copyValue(String(asset.id), true)} aria-label={t('designs.copyAssetId')} title={t('designs.copyAssetId')}>{copiedId ? <Check size={15} /> : <Copy size={15} />}</button></div><code>{asset.id}</code>{copiedId && <span className="copy-feedback" role="status">{t('designs.assetIdCopied')}</span>}</div>
+      <div className="detail-section"><div className="section-heading"><h3>{t('components.preview.relativePath')}</h3><button className="icon-button compact" onClick={() => void copyValue(asset.relative_path)} aria-label={t('components.preview.copyPath')} title={t('components.preview.copyPath')}>{copied ? <Check size={15} /> : <Copy size={15} />}</button></div><p className="file-path">{asset.relative_path}</p>{copied && <span className="copy-feedback" role="status">{t('components.preview.copied')}</span>}</div>
       {error && <div className="inline-error" role="alert">{error}</div>}
     </aside>
   </Dialog>;

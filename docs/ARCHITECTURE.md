@@ -19,6 +19,13 @@ flowchart LR
     Workers --> Cache[磁盘 PNG 缓存]
     Workers --> DB
     HTTP --> Cache
+    ChatGPT[ChatGPT / MCP 客户端] --> MCP[Streamable HTTP /mcp]
+    MCP --> DB
+    MCP --> Design[设计布局与 PNG 合成]
+    HTTP --> Design
+    Design --> Render[单渲染线程 / 4 项等待队列]
+    Render --> Generated[generated 布局与成品]
+    Design --> Fonts[启动时加载的字体]
 ```
 
 HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监听地址、本机网页及网络访问地址；IPv4 全地址绑定使用 [network.rs](../src/network.rs) 枚举活跃网卡，不访问外部服务。默认数据目录位于当前用户的应用数据目录；数据库为 `picsoc.sqlite3`，缩略图位于 `thumbnails`。素材库保留原有目录结构，索引、收藏、标签和缓存写入数据目录，原图只读访问。
@@ -70,7 +77,7 @@ HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监�
 
 原图只通过索引 ID 获取文件路径，不接受任意文件路径参数。`secure_path` 拒绝绝对路径、`..` 等非普通相对组件，检查素材根目录仍对应原规范路径，并规范化目标路径、确认其位于库内且为文件。读取采用 `ReaderStream` 和 64 KiB 块，支持单段 Range、ETag 和条件请求，不把整个原图载入内存，见 [api.rs](../src/api.rs)。
 
-所有路由经过统一中间件，检查请求的 Origin；回环绑定还限制 Host 为 localhost 或回环地址。设置 `PICSOC_PASSWORD` 后，静态前端和认证接口允许匿名访问，数据 API 和媒体通过会话 Cookie 或兼容的 Basic Auth 认证。中英文错误按每个请求的 `Accept-Language` 处理，保留兼容的 `error` 并提供稳定 `code`，见 [i18n.rs](../src/i18n.rs)。
+网页与 REST API 路由经过统一中间件，检查请求的 Origin；回环绑定还限制 Host 为 localhost 或回环地址。设置 `PICSOC_PASSWORD` 后，静态前端和认证接口允许匿名访问，数据 API 和媒体通过会话 Cookie 或兼容的 Basic Auth 认证。中英文错误按每个请求的 `Accept-Language` 处理，保留兼容的 `error` 并提供稳定 `code`，见 [i18n.rs](../src/i18n.rs)。MCP 与 OAuth 使用单独的路由和授权，网页 Cookie/Basic 不会绕过 MCP 的 Bearer 验证。
 
 [auth.rs](../src/auth.rs) 管理有界内存会话，操作系统随机令牌不包含密码，24 小时后过期，退出撤销，服务重启失效。前端 [AuthGate.tsx](../frontend/src/AuthGate.tsx) 先读取认证状态，登录后才挂载素材界面；数据请求返回 401 时回到登录页。密码仅在登录表单内存中短暂保留，不写入浏览器持久存储。语言切换由 [LanguageMenu.tsx](../frontend/src/LanguageMenu.tsx) 提供统一菜单样式。
 
@@ -89,6 +96,32 @@ HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监�
 `exclude_names` 按换行拆分、去空和去重，最多 50 项，仅对 `assets.name` 添加字面子串的 `NOT LIKE` 条件；不会把目录名或标签当作噪音文件名。关键词中的通配符被转义，排除词与其他筛选共用分页计数条件。
 
 搜索使用 SQLite `LIKE` 对文件名、相对路径和标签做子串匹配，转义输入中的 `%`、`_` 和反斜杠。中文可直接包含匹配；ASCII 默认不区分大小写，没有中文分词、拼音、Unicode 大小写折叠或相关性排序。前导 `%` 搜索通常不能直接使用 B-tree 索引缩小候选集，大规模搜索应通过实际数据评估，再决定是否引入 FTS 或专门检索索引。
+
+## MCP 与 ChatGPT 接入
+
+[mcp.rs](../src/mcp.rs) 提供规范允许的无 session、JSON 响应模式 Streamable HTTP，挂在现有服务的 `/mcp`；没有第二个服务端口、SSE 通道或服务器主动请求。支持 `initialize`、`ping`、`tools/list`、`tools/call` 与通知；当前协议版本为 `2025-03-26`、`2025-06-18`、`2025-11-25`，不声称实现生命周期已变化的 2026 协议。POST 请求最大 1 MiB，tool handler 最长等待 60 秒；合成任务独立运行，超时不等于已取消渲染，需先查询 job 状态。
+
+[mcp_tools.rs](../src/mcp_tools.rs) 将现有索引和 DesignService 映射为 10 个明确工具。先查询已导入的库和目录，再按素材名/路径/标签与尺寸等字段搜索，默认返回 24、最多 50 个候选，不读取任意目录，也没有视觉语义索引。`preview_assets` 返回真实 PNG 拼版与编号，`get_render` 返回真实预览 PNG，使用 MCP 标准 image content 的 base64 数据，不要求模型通过浏览器 Cookie 下载缩略图。成功结果同时提供结构化元数据；业务失败以 `isError` 提供给模型，协议错误使用 JSON-RPC error。
+
+[mcp_auth.rs](../src/mcp_auth.rs) 默认为关闭，`PICSOC_MCP_ENABLED=true` 或 `--mcp` 显式启用。支持独立静态 Bearer token（至少 32 个 printable ASCII 字符），或通过 HTTPS `PICSOC_PUBLIC_URL` 与现有共享密码启用单拥有者 OAuth。URL 必须是显式配置的根 origin，不从请求 Host/X-Forwarded-Host 推断；仅开发时允许 loopback HTTP，局域网 HTTP 地址不能用作公开 OAuth issuer。MCP Origin 缺省可接受，存在时须精确匹配已配置 origin；token-only 模式拒绝带 Origin 的调用。
+
+OAuth 实现 protected-resource 与 authorization-server 发现、精确回调白名单的 DCR、S256 PKCE、两分钟单次授权码、resource/audience 绑定、read/write 作用域、短期访问令牌、refresh 轮转与重放撤销。默认回调为 `https://chatgpt.com/connector_platform_oauth_redirect`；授权响应附精确 issuer，额外回调只能显式配置完整地址。public/secret-post/secret-basic 客户端均可注册，注册最多 128 个且每分钟最多 5 次；待授权请求和 code 各最多 128 项，token/refresh/replay 集合各最多 512 项。
+
+授权客户端和令牌哈希写入数据目录的 `mcp-oauth.json`，使用唯一临时文件、同步与原子 rename；Unix 新文件权限为 `0600`，明文密码、access/refresh token 与 client secret 不写入文件。访问令牌一小时、refresh family 最多七天；服务重启仍可使用未过期凭据。授权表单与短期 code 只存在于内存，重启后需重走尚未完成的授权。`picsoc:read` 可搜索与预览，`picsoc:write` 还允许保存布局和创建合成任务。
+
+ChatGPT 的云端连接需要可访问的 HTTPS MCP 地址或具备相应权限的私有隧道。`http://192.168.2.101:3210/` 是网页的局域网入口；公开反向代理例为 `https://orionai.iepose.cn/mcp`。代码、公开域名可访问性和用户账户中的实际授权是不同检查；仓库更新不会自动重启 Debian 服务或完成 ChatGPT 授权。具体部署与连接见 [MCP 说明](MCP.md) / [English guide](MCP.en.md)。
+
+## 布局版本与有界 PNG 合成
+
+[design.rs](../src/design.rs) 提供同一份 Rust 合成服务供 REST 和 MCP 使用。布局以原画布像素描述，数组按从底到顶顺序绘制 image、rect 和 text 图层；`image` 负责解码、尺寸/方向处理、透明叠加和 PNG 编码，`ab_glyph` 负责字体字形。图像缩放使用预乘 alpha 避免透明 UI 边缘的色晕。GIF 取首帧，原库的 GIF 动画预览仍由原图接口提供。
+
+保存时校验最大 4096×4096 / 16,777,216 像素、64 图层、坐标与颜色、文字总数和字体字形等约束，然后将布局和素材 `cache_key` 保存为 `generated/designs/<design_id>/r<revision>.json`。新设计 revision=1，修改需提交匹配最新版本的 `expected_revision`，否则返回 HTTP 409/MCP 业务错误。版本采用只创建新文件的发布方式，保留历史版本，每个设计最多 10,000 版；这不复制原素材，后续删除或改名仍可能使旧布局无法再次合成。
+
+一个独立 `picsoc-render` 线程处理任务，容量 4 的同步队列使用 `try_send`，满时返回 Busy / HTTP 429。合成与素材拼版共用 render lock，避免两者同时解码；拼版忙时立即返回 Busy，缩略图队列和扫描器继续使用各自原有流程。每张素材顺序解码并丢弃临时缓冲，单素材文件 256 MiB、解码和 RGBA 缓冲 64 MiB、边长 32,768 的阈值比缩略图预算更严格。字体总预算 64 MiB。画布、缩放、预览、解码器和线程仍产生额外内存，不能将这些处理阈值当作进程 RSS 保证。
+
+`preview` 使用最大边 1280 的较小画布，`final` 使用原始尺寸。任务及成品存于 `generated/jobs/<job_id>/`：版本化 job 状态、`output.png`、`preview.png` 和 `layout.json`；layout 包含 StoredDesign 与素材指纹，PNG 保留透明通道。文件输出只接受这三个固定文件名，使用既有 `secure_path` 校验与流式读取，REST 下载需 Cookie/Basic Auth；MCP 令牌只对 `/mcp` 生效。成功成品与布局保留，服务重启会把 queued/running 任务标记为 failed，避免无限等待。当前没有自动磁盘保留/清理策略。
+
+字体在启动时从数据目录 `fonts` 的前 8 个排序项和已知系统字体路径加载原始 TTF/OTF/TTC，工具只传 font_id。中文字体可由原生系统安装或放入用户字体目录；Docker 提供文泉驿与 DejaVu。`get_fonts` 返回样例中文支持标记，保存文字时还逐字校验。基础文字支持换行、按宽度折行、对齐与字距，尚无复杂文字塑形、SVG 路径渲染、任意旋转或滤镜链。
 
 ## 扩展与验证入口
 

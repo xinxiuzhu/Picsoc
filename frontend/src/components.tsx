@@ -22,23 +22,21 @@ export function Dialog({ children, onClose, className = '', labelledBy }: {
     const previous = document.activeElement as HTMLElement | null;
     const oldOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const focusable = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], summary, [tabindex="0"]';
+    const visibleItems = (selector: string) => [...(element.current?.querySelectorAll<HTMLElement>(selector) ?? [])].filter(item => item.getClientRects().length > 0);
     const frame = requestAnimationFrame(() => {
-      (element.current?.querySelector<HTMLElement>('[data-autofocus]')
-        ?? element.current?.querySelector<HTMLElement>('input:not(:disabled), button:not(:disabled)')
-        ?? element.current)?.focus();
+      (visibleItems('[data-autofocus]')[0] ?? visibleItems(focusable)[0] ?? element.current)?.focus();
     });
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeRef.current();
       if (event.key !== 'Tab') return;
-      const items = [...(element.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
-      ) ?? [])].filter(item => item.offsetParent !== null);
+      const items = visibleItems(focusable);
       if (!items.length) { event.preventDefault(); return; }
       const first = items[0];
       const last = items[items.length - 1];
       if (event.shiftKey && (document.activeElement === first || !element.current?.contains(document.activeElement))) {
         event.preventDefault(); last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (document.activeElement === last || !element.current?.contains(document.activeElement))) {
         event.preventDefault(); first.focus();
       }
     };
@@ -98,16 +96,13 @@ export function AddLibraryDialog({ onClose, onAdded }: {
     <h2 id="add-library-title">{t('components.addLibrary.title')}</h2>
     <p className="dialog-intro">{t('components.addLibrary.intro')}</p>
     <form onSubmit={submit}>
+      <button type="button" className="folder-chooser" onClick={() => setShowPicker(true)} disabled={pending} data-autofocus><span className="chooser-icon"><Folder size={28} strokeWidth={1.6} /></span><span><strong>{t('components.addLibrary.chooseFolder')}</strong><small>{t('components.addLibrary.chooseHint')}</small></span><ChevronRight size={19} /></button>
       <label className="field-label" htmlFor="library-path">{t('components.addLibrary.path')} <span>{t('components.common.required')}</span></label>
-      <div className="path-input-row"><input id="library-path" className="text-input" value={path} onChange={event => setPath(event.target.value)} required autoComplete="off" placeholder={t('components.addLibrary.pathPlaceholder')} data-autofocus disabled={pending} /><button type="button" className="button secondary" onClick={() => setShowPicker(true)} disabled={pending}><Folder size={15} />{t('components.addLibrary.chooseFolder')}</button></div>
-      <div className="path-help">
-        <strong>{t('components.addLibrary.pathHelpTitle')}</strong>
-        <p>{t('components.addLibrary.pathHelpBefore')} <code>/library</code>{t('components.addLibrary.pathHelpAfter')}</p>
-      </div>
+      <div className="path-input-row"><input id="library-path" className="text-input" value={path} onChange={event => setPath(event.target.value)} required autoComplete="off" placeholder={t('components.addLibrary.pathPlaceholder')} disabled={pending} /></div>
       <label className="field-label" htmlFor="library-name">{t('components.addLibrary.name')} <span>{t('components.common.optional')}</span></label>
       <input id="library-name" className="text-input" value={name} onChange={event => setName(event.target.value)} autoComplete="off" maxLength={100} placeholder={t('components.addLibrary.namePlaceholder')} disabled={pending} />
       <p className="quiet-note">{t('components.addLibrary.readonly')}</p>
-      <p className="quiet-note">{t('components.addLibrary.photosHint')}</p>
+      <details className="import-help"><summary>{t('components.addLibrary.help')}</summary><div className="path-help"><strong>{t('components.addLibrary.pathHelpTitle')}</strong><p>{t('components.addLibrary.pathHelpBefore')} <code>/library</code>{t('components.addLibrary.pathHelpAfter')}</p><p>{t('components.addLibrary.photosHint')}</p></div></details>
       {error && <div className="inline-error" role="alert">{error}</div>}
       <div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose} disabled={pending}>{t('components.common.cancel')}</button><button className="button primary" disabled={pending || !path.trim()}>{pending ? <LoaderCircle size={16} className="spin" /> : <Plus size={16} />}{t(pending ? 'components.addLibrary.adding' : 'components.addLibrary.add')}</button></div>
     </form>
@@ -390,7 +385,7 @@ export function AssetPreview({ asset: initialAsset, library, index, total, onClo
 
   return <Dialog onClose={onClose} labelledBy="preview-title" className="preview-dialog">
     <div className="preview-stage">
-      <div className="preview-stage-top"><span>{(index + 1).toLocaleString(i18n.resolvedLanguage)} <i>/</i> {total.toLocaleString(i18n.resolvedLanguage)}</span><span className="preview-key-hint">{t('components.preview.keyHint')}</span></div>
+      <div className="preview-stage-top"><span>{(index + 1).toLocaleString(i18n.resolvedLanguage)} <i>/</i> {total.toLocaleString(i18n.resolvedLanguage)}</span><span className="preview-key-hint">{t('components.preview.keyHint')}</span><button className="icon-button preview-mobile-close" onClick={onClose} aria-label={t('components.preview.close')}><X size={20} /></button></div>
       <div className="preview-image-area">
         <PreviewImage key={previewBaseUrl} url={previewBaseUrl} name={asset.name} retry={isTiff} />
         <button className="preview-nav previous" onClick={() => onNavigate(-1)} disabled={index === 0 || busy} aria-label={t('components.preview.previous')}><ChevronLeft size={22} /></button>

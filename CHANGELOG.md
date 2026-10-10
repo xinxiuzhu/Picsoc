@@ -2,6 +2,9 @@
 
 ## 未发布 / Unreleased
 
+- 重设计 Web 界面：macOS 风格浅色侧栏、蓝色操作按钮、集中搜索、完整图片网格、文件夹导入面板与大图预览，适配窄屏并保留中英文。
+- 支持 `⌘K` / `Ctrl+K` / `/` 聚焦搜索，改善弹窗键盘焦点与移动端预览关闭入口。
+- Redesign the Web UI with a macOS-inspired sidebar, streamlined search and import, image-first browsing, responsive previews, and keyboard shortcuts in Chinese and English.
 - 扫描普通图片目录时跳过 Apple Photos `.photoslibrary` 图库，避免其读取权限错误使整个素材库显示扫描异常；保留旧图库索引、收藏和标签。
 - 直接选择图库包或其内部目录时提供中英文导出提示，文件夹选择器不再列出图库包；普通目录权限错误仍保留索引并报告异常。
 - Skip Apple Photos library packages when scanning image folders, retain existing package annotations, and provide localized export guidance when selecting unsupported Photos library paths.

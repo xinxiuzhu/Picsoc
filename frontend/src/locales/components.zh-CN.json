@@ -11,8 +11,8 @@
       "tagSeparator": "、"
     },
     "addLibrary": {
-      "title": "给灵感安一个家",
-      "intro": "添加图片所在的文件夹，Picsoc 会建立索引和缩略图。",
+      "title": "添加素材库",
+      "intro": "连接已有图片文件夹，把好素材整理到一起。",
       "path": "素材文件夹路径",
       "pathPlaceholder": "例如 D:\\Pictures 或 /library",
       "chooseFolder": "选择文件夹",
@@ -24,7 +24,9 @@
       "readonly": "原图保留在文件夹中，添加素材库不会移动或修改文件。",
       "adding": "正在添加…",
       "add": "添加素材库",
-      "photosHint": "Apple Photos 图库会自动跳过。请先在「照片」中导出为 JPEG、PNG 或 TIFF，再添加导出文件夹。"
+      "photosHint": "Apple Photos 图库会自动跳过。请先在「照片」中导出为 JPEG、PNG 或 TIFF，再添加导出文件夹。",
+      "chooseHint": "浏览文件夹，或在下方输入路径",
+      "help": "服务器、Docker 与 Apple Photos 导入说明"
     },
     "directory": {
       "eyebrow": "添加已有素材",
@@ -67,10 +69,10 @@
     "empty": {
       "welcomeEyebrow": "你的私人灵感空间",
       "otherEyebrow": "留一点空间给新的灵感",
-      "welcomeTitle": "所有灵感，触手可及。",
+      "welcomeTitle": "让好素材，有自己的位置。",
       "filteredTitle": "暂时没有找到这些素材",
       "emptyTitle": "这里还没有图片",
-      "welcomeDescription": "把散落在文件夹里的图片整理成你的私人素材库。\n轻松浏览、收藏、打标签，让好素材随时找到。",
+      "welcomeDescription": "连接一个图片文件夹，即可浏览、收藏和整理。\n你的原图会留在原来的位置。",
       "filteredDescription": "试试其他关键词，或清除筛选条件。",
       "emptyDescription": "扫描完成后，支持的图片会出现在这里。\n也可以添加另一个素材文件夹。",
       "reset": "清除筛选",
@@ -114,7 +116,7 @@
       "copied": "已复制"
     },
     "batchTags": {
-      "title": "一起整理这些标签",
+      "title": "批量编辑标签",
       "intro": "对选中的 {{formattedCount}} 张素材批量应用标签。",
       "action": "标签操作方式",
       "add": "添加标签",

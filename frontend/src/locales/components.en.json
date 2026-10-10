@@ -11,8 +11,8 @@
       "tagSeparator": ", "
     },
     "addLibrary": {
-      "title": "Give your inspiration a home",
-      "intro": "Add a folder containing images. Picsoc will index them and create thumbnails.",
+      "title": "Add a library",
+      "intro": "Connect an existing folder and give your images a home.",
       "path": "Image folder path",
       "pathPlaceholder": "For example, D:\\Pictures or /library",
       "chooseFolder": "Choose folder",
@@ -24,7 +24,9 @@
       "readonly": "Original images stay in their folder. Adding a library does not move or modify them.",
       "adding": "Adding…",
       "add": "Add library",
-      "photosHint": "Apple Photos libraries are skipped automatically. Export your photos as JPEG, PNG, or TIFF from Photos, then add the exported folder."
+      "photosHint": "Apple Photos libraries are skipped automatically. Export your photos as JPEG, PNG, or TIFF from Photos, then add the exported folder.",
+      "chooseHint": "Browse folders, or enter a path below",
+      "help": "Server, Docker & Apple Photos help"
     },
     "directory": {
       "eyebrow": "ADD EXISTING IMAGES",
@@ -67,10 +69,10 @@
     "empty": {
       "welcomeEyebrow": "YOUR PRIVATE CREATIVE SPACE",
       "otherEyebrow": "Make room for new inspiration",
-      "welcomeTitle": "All your inspiration, within reach.",
+      "welcomeTitle": "A home for your inspiration.",
       "filteredTitle": "No matching images found",
       "emptyTitle": "No images here yet",
-      "welcomeDescription": "Bring images from your folders into your own library.\nBrowse, favorite, and tag them so inspiration is easy to find.",
+      "welcomeDescription": "Connect a folder to browse, favorite, and organize.\nYour originals stay right where they are.",
       "filteredDescription": "Try other keywords or clear the filters.",
       "emptyDescription": "Supported images will appear here as scanning progresses.\nYou can also add another image folder.",
       "reset": "Clear filters",
@@ -114,7 +116,7 @@
       "copied": "Copied"
     },
     "batchTags": {
-      "title": "Organize these tags together",
+      "title": "Edit tags in bulk",
       "intro_one": "Apply tags to {{formattedCount}} selected asset.",
       "intro_other": "Apply tags to {{formattedCount}} selected assets.",
       "action": "Tag action",

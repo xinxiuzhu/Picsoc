@@ -1,9 +1,11 @@
 mod api;
+mod auth;
 mod db;
 mod folders;
 mod i18n;
 mod media;
 mod models;
+mod network;
 mod scanner;
 
 use anyhow::{Context, Result};
@@ -93,21 +95,45 @@ async fn main() -> Result<()> {
         scanner: scanner.clone(),
         data_dir: data_dir.clone(),
         bind,
-        password,
+        auth: auth::Auth::new(password),
     };
-    let local_ip = if bind.ip().is_unspecified() {
-        "127.0.0.1".to_string()
-    } else if bind.ip().is_ipv6() {
-        format!("[{}]", bind.ip())
-    } else {
-        bind.ip().to_string()
-    };
-    let url = format!("http://{local_ip}:{}", bind.port());
+    let url = network::local_url(bind);
     println!(
-        "Picsoc {}\n网页：{url}\n数据目录：{}\n按 Ctrl+C 退出",
+        "Picsoc {}\n监听地址：{bind}\n本机网页：{url}\n数据目录：{}",
         env!("CARGO_PKG_VERSION"),
         data_dir.display()
     );
+    if bind.is_ipv4() && bind.ip().is_unspecified() {
+        match network::ipv4_addresses() {
+            Ok(addresses) if !addresses.is_empty() => {
+                for address in addresses {
+                    println!(
+                        "网络 IPv4：http://{}:{}（{}）",
+                        address.ip,
+                        bind.port(),
+                        address.interface
+                    );
+                }
+            }
+            Ok(_) => println!("网络 IPv4：未检测到可用地址，请检查网卡连接"),
+            Err(error) => {
+                tracing::warn!(%error, "无法读取网卡 IPv4 地址，请使用服务器实际 IP 访问")
+            }
+        }
+    } else if bind.ip().is_unspecified() {
+        println!(
+            "网络 IPv6：请使用服务器实际 IPv6 地址和端口 {} 访问",
+            bind.port()
+        );
+    } else if bind.ip().is_loopback() {
+        println!(
+            "其他设备访问：添加 --bind 0.0.0.0:{} --no-open",
+            bind.port()
+        );
+    } else {
+        println!("网络访问：{url}");
+    }
+    println!("按 Ctrl+C 退出");
     if !args.no_open {
         let browser_url = url.clone();
         tokio::task::spawn_blocking(move || {

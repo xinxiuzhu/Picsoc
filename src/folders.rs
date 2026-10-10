@@ -34,6 +34,15 @@ pub fn normalize_folder(folder: &str) -> Result<String> {
     Ok(parts.join(std::path::MAIN_SEPARATOR_STR))
 }
 
+/// A keyset cursor names a sibling in this listing; it may have been deleted since the last page.
+pub fn normalize_cursor(parent: &str, cursor: &str) -> Result<String> {
+    let cursor = normalize_folder(cursor)?;
+    if cursor.is_empty() || Path::new(&cursor).parent().and_then(Path::to_str) != Some(parent) {
+        bail!("目录分页游标必须属于当前目录");
+    }
+    Ok(cursor)
+}
+
 /// The separator is ASCII, so its successor is a precise binary upper bound for this subtree.
 pub fn subtree_bounds(folder: &str) -> (String, String) {
     (

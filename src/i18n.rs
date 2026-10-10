@@ -68,6 +68,16 @@ const MESSAGES: &[(&str, &str, &str)] = &[
         "invalid_folder_path",
     ),
     (
+        "目录分页游标必须属于当前目录",
+        "The folder page cursor must belong to the current directory.",
+        "invalid_folder_cursor",
+    ),
+    (
+        "每页目录数量需要在 1–1000 之间",
+        "The folder page size must be between 1 and 1000.",
+        "invalid_folder_limit",
+    ),
+    (
         "素材或目录不存在",
         "The asset or library does not exist.",
         "not_found",
@@ -86,6 +96,22 @@ const MESSAGES: &[(&str, &str, &str)] = &[
         "需要用户名 picsoc 和设置的密码",
         "Sign in with username picsoc and your configured password.",
         "authentication_required",
+    ),
+    (
+        "请先登录 Picsoc",
+        "Please sign in to Picsoc.",
+        "authentication_required",
+    ),
+    ("密码错误", "The password is incorrect.", "invalid_password"),
+    (
+        "登录请求需要填写密码",
+        "Enter a password in the login request.",
+        "invalid_login_request",
+    ),
+    (
+        "登录服务暂不可用",
+        "The login service is temporarily unavailable.",
+        "login_unavailable",
     ),
     (
         "请求方法无效",
@@ -152,7 +178,32 @@ const MESSAGES: &[(&str, &str, &str)] = &[
         "The search query is too long.",
         "query_too_long",
     ),
+    (
+        "排除关键词最多 50 个，每个最多 100 个字符，总长度最多 4096 字节",
+        "Use up to 50 excluded name keywords, with up to 100 characters per keyword and 4096 UTF-8 bytes in total.",
+        "invalid_excluded_names",
+    ),
     ("排序方式无效", "The sort order is invalid.", "invalid_sort"),
+    (
+        "图片方向无效",
+        "The image orientation is invalid.",
+        "invalid_orientation",
+    ),
+    (
+        "宽高比需要两个大于零的数，例如 16:9",
+        "Enter an aspect ratio with two positive numbers, such as 16:9.",
+        "invalid_aspect_ratio",
+    ),
+    (
+        "尺寸下限不能大于上限",
+        "The minimum image dimension cannot exceed the maximum.",
+        "invalid_dimension_range",
+    ),
+    (
+        "文件大小必须非负，且下限不能大于上限",
+        "File sizes must be nonnegative, and the minimum cannot exceed the maximum.",
+        "invalid_size_range",
+    ),
     (
         "图片格式无效",
         "The image format is invalid.",

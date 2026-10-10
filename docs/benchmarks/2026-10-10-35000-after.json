@@ -1,0 +1,127 @@
+{
+  "platform": "macOS-15.7.7-x86_64-i386-64bit-Mach-O",
+  "assets": 35000,
+  "dimensions": [
+    64,
+    36
+  ],
+  "dimension_variants": [
+    [
+      36,
+      36
+    ],
+    [
+      36,
+      64
+    ],
+    [
+      64,
+      36
+    ]
+  ],
+  "format": "solid-color RGB PNG",
+  "layout": "structured",
+  "workers": 1,
+  "fixture_creation_seconds": 5.055,
+  "index_ready_seconds": 44.445,
+  "import_and_thumbnails_seconds": 44.457,
+  "completion_poll_interval_seconds": 1,
+  "original_bytes": 4130016,
+  "cache_bytes": 9426697,
+  "thumbnail_files": 35000,
+  "queries": {
+    "assets_first_page": {
+      "samples": 20,
+      "first_ms": 6.073,
+      "p50_ms": 3.642,
+      "p95_ms": 5.365,
+      "max_ms": 6.073,
+      "request": "/api/assets?library_id=1&limit=200&sort=modified"
+    },
+    "assets_deep_page": {
+      "samples": 20,
+      "first_ms": 3.644,
+      "p50_ms": 3.649,
+      "p95_ms": 7.38,
+      "max_ms": 7.612,
+      "request": "/api/assets?library_id=1&limit=200&sort=modified&offset=34800"
+    },
+    "folders_root": {
+      "samples": 20,
+      "first_ms": 5.322,
+      "p50_ms": 5.077,
+      "p95_ms": 9.081,
+      "max_ms": 9.133,
+      "request": "/api/libraries/1/folders?parent=&limit=200"
+    },
+    "assets_root_direct": {
+      "samples": 20,
+      "first_ms": 6.795,
+      "p50_ms": 7.506,
+      "p95_ms": 15.457,
+      "max_ms": 15.837,
+      "request": "/api/assets?library_id=1&limit=200&folder=&folder_recursive=false"
+    },
+    "exclude_map": {
+      "samples": 20,
+      "first_ms": 18.648,
+      "p50_ms": 14.778,
+      "p95_ms": 22.973,
+      "max_ms": 25.613,
+      "request": "/api/assets?library_id=1&limit=200&exclude_names=map"
+    },
+    "aspect_ratio": {
+      "samples": 20,
+      "first_ms": 16.877,
+      "p50_ms": 15.793,
+      "p95_ms": 21.649,
+      "max_ms": 24.292,
+      "request": "/api/assets?library_id=1&limit=200&aspect_ratio=64%3A36"
+    },
+    "geometry_and_excluded_name": {
+      "samples": 20,
+      "first_ms": 31.533,
+      "p50_ms": 31.02,
+      "p95_ms": 38.651,
+      "max_ms": 45.186,
+      "request": "/api/assets?library_id=1&limit=200&orientation=landscape&aspect_ratio=64%3A36&min_width=64&max_width=64&min_height=36&max_height=36&exclude_names=map&sort=pixels"
+    },
+    "folders_empty": {
+      "samples": 20,
+      "first_ms": 1.797,
+      "p50_ms": 1.851,
+      "p95_ms": 4.038,
+      "max_ms": 4.061,
+      "request": "/api/libraries/1/folders?parent=empty-folder&limit=200"
+    },
+    "folders_collection": {
+      "samples": 20,
+      "first_ms": 3.082,
+      "p50_ms": 1.575,
+      "p95_ms": 3.014,
+      "max_ms": 3.082,
+      "request": "/api/libraries/1/folders?parent=collection-00000&limit=200"
+    },
+    "assets_collection_recursive": {
+      "samples": 20,
+      "first_ms": 5.12,
+      "p50_ms": 3.018,
+      "p95_ms": 5.048,
+      "max_ms": 5.12,
+      "request": "/api/assets?library_id=1&limit=200&folder=collection-00000"
+    },
+    "assets_collection_direct": {
+      "samples": 20,
+      "first_ms": 18.138,
+      "p50_ms": 12.323,
+      "p95_ms": 18.888,
+      "max_ms": 22.079,
+      "request": "/api/assets?library_id=1&limit=200&folder=collection-00000&folder_recursive=false"
+    }
+  },
+  "validation": "All endpoint totals, bounded pages, directory counts, name exclusions and combined dimensions matched the generated fixtures.",
+  "scope": "Disposable solid-color PNGs test asset count and indexed HTTP queries. They do not simulate a 15 GB collection, large-image decoding, GIFs, concurrent clients or production storage.",
+  "peak_child_rss_mib": 14.52,
+  "measurement_date": "2026-10-10",
+  "stage": "after avoiding thumbnail upscaling"
+}

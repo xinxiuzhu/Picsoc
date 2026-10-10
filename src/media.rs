@@ -82,9 +82,15 @@ pub fn create_thumbnail(cache_root: &Path, asset: &Asset) -> Result<(u32, u32)> 
     let mut decoded = DynamicImage::from_decoder(decoder)?;
     decoded.apply_orientation(orientation);
     let (width, height) = (decoded.width(), decoded.height());
-    let thumbnail = decoded.thumbnail(384, 384).into_rgba8();
-    // Drop the full image before encoding to keep peak memory low.
-    drop(decoded);
+    let thumbnail = if width <= 384 && height <= 384 {
+        // Keep small images at their original size instead of enlarging their cache files.
+        decoded.into_rgba8()
+    } else {
+        let thumbnail = decoded.thumbnail(384, 384).into_rgba8();
+        // Drop the full image before encoding to keep peak memory low.
+        drop(decoded);
+        thumbnail
+    };
     let target = cache_path(cache_root, asset);
     let parent = target.parent().context("缩略图缓存路径错误")?;
     fs::create_dir_all(parent)?;
@@ -152,18 +158,12 @@ mod tests {
         assert!(secure_path(&root.canonicalize().unwrap(), "link.png").is_err());
     }
 
-    #[test]
-    fn simultaneous_thumbnail_requests_write_valid_atomic_cache() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        image::RgbaImage::from_pixel(80, 60, image::Rgba([15, 30, 60, 128]))
-            .save(root.join("透明.png"))
-            .unwrap();
-        let asset = Asset {
-            id: 1,
+    fn test_asset(root: &Path, id: i64, name: &str) -> Asset {
+        Asset {
+            id,
             library_id: 1,
-            name: "透明.png".into(),
-            relative_path: "透明.png".into(),
+            name: name.into(),
+            relative_path: name.into(),
             format: "png".into(),
             size: 100,
             width: None,
@@ -176,7 +176,17 @@ mod tests {
             mtime_ns: 1,
             library_path: root.to_str().unwrap().into(),
             thumbnail_error: None,
-        };
+        }
+    }
+
+    #[test]
+    fn simultaneous_thumbnail_requests_write_valid_atomic_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        image::RgbaImage::from_pixel(80, 60, image::Rgba([15, 30, 60, 128]))
+            .save(root.join("透明.png"))
+            .unwrap();
+        let asset = test_asset(&root, 1, "透明.png");
         let cache = root.join("cache");
         let tasks = (0..4)
             .map(|_| {
@@ -191,7 +201,37 @@ mod tests {
         let thumbnail = image::open(cache_path(&cache, &asset))
             .unwrap()
             .into_rgba8();
+        assert_eq!(thumbnail.dimensions(), (80, 60));
         assert_eq!(thumbnail.get_pixel(0, 0).0, [15, 30, 60, 128]);
         assert_eq!(fs::read_dir(cache.join("1")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn large_and_narrow_images_shrink_preserving_alpha_and_original_dimensions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let cache = root.join("cache");
+        for (index, ((width, height), expected)) in [
+            ((1536, 768), (384, 192)),
+            ((768, 1536), (192, 384)),
+            ((1, 1536), (1, 384)),
+            ((1536, 1), (384, 1)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("透明-{index}.png");
+            image::RgbaImage::from_pixel(width, height, image::Rgba([15, 30, 60, 128]))
+                .save(root.join(&name))
+                .unwrap();
+            let asset = test_asset(&root, index as i64 + 1, &name);
+            assert_eq!(create_thumbnail(&cache, &asset).unwrap(), (width, height));
+            let thumbnail = image::open(cache_path(&cache, &asset))
+                .unwrap()
+                .into_rgba8();
+            assert_eq!(thumbnail.dimensions(), expected);
+            assert!(thumbnail.width() <= width && thumbnail.height() <= height);
+            assert!(thumbnail.pixels().all(|pixel| pixel.0 == [15, 30, 60, 128]));
+        }
     }
 }

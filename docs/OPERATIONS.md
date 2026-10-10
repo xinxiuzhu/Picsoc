@@ -107,7 +107,7 @@ server {
 }
 ```
 
-保留浏览器的 Origin 和 Authorization；不要为了绕过 403 去清空 Origin、关闭后端认证或添加宽泛的 CORS。使用 `$http_host` 保留 Host 中的端口，保证后端的同源检查能与浏览器 Origin 对齐。以上指令参考 [Nginx 官方代理文档](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)；生产前应在自己的目标机器执行配置检查与实际验证，本文不代表该部署已在你的环境运行：
+保留浏览器的 Origin、Cookie 和脚本的 Authorization；不要为了绕过 403 去清空 Origin、关闭后端认证或添加宽泛的 CORS。使用 `$http_host` 保留 Host 中的端口，保证后端的同源检查能与浏览器 Origin 对齐。以上指令参考 [Nginx 官方代理文档](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)；生产前应在自己的目标机器执行配置检查与实际验证，本文不代表该部署已在你的环境运行：
 
 ```sh
 sudo nginx -t
@@ -115,7 +115,7 @@ sudo systemctl reload nginx
 curl --fail --user picsoc https://picsoc.example.com/api/health
 ```
 
-`curl --user picsoc` 会交互询问密码。浏览器访问域名后，核对登录、目录选择、添加素材库、收藏/标签保存、预览、下载与 GIF 动画。确认不带密码的请求返回 `401`，并从另一台设备确认无法直接连接宿主机 3210。
+`curl --user picsoc` 会交互询问密码。浏览器访问域名后，核对登录、目录选择、添加素材库、收藏/标签保存、预览、下载与 GIF 动画。确认未认证的数据 API 和媒体请求返回 `401`，并从另一台设备确认无法直接连接宿主机 3210。
 
 原生服务若仍绑定 `127.0.0.1`，会拒绝上述公开域名 Host。此示例因此使用 Compose：宿主机端口仅回环可达，容器内监听地址允许代理保留真实 Host。若改为原生广域绑定，需要额外防火墙仅允许代理连接；不要照抄配置后将后端直接开放。
 
@@ -129,6 +129,6 @@ curl --fail --user picsoc https://picsoc.example.com/api/health
 | 缩略图失败 | 原图权限、格式、文件/像素限制、数据目录剩余空间；TIFF 使用缩略图而非浏览器原图 |
 | 容器反复退出 | 查看退出状态与日志，保持 `PICSOC_WORKERS=1`，检查内存上限和磁盘空间 |
 | 代理请求 403 | Host 与 Origin 是否相同、原生是否仅回环绑定，不要删除 Origin 绕过检查 |
-| 修改数据时 401 | 密码与用户名、代理是否保留 Authorization，浏览器是否使用旧认证信息 |
+| 修改数据时 401 | 浏览器会话是否过期、代理是否保留 Cookie，重新登录；脚本检查密码、用户名和 Authorization |
 
 删除素材库只删除索引和缓存，不删除原图；但对应收藏和标签也会被移除。误移除后应从停机备份恢复元数据，重新添加目录不能恢复旧标签。

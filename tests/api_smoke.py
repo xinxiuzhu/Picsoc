@@ -2,9 +2,11 @@
 """Run the real Picsoc service against temporary files, without extra dependencies."""
 import argparse
 import base64
+import http.cookiejar
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import struct
 import subprocess
@@ -55,12 +57,12 @@ class SmokeTest(unittest.TestCase):
             sock.bind(('127.0.0.1', 0))
             self.port = sock.getsockname()[1]
         self.base = f'http://127.0.0.1:{self.port}'
-        self.log = open(self.root / 'service.log', 'w+')
+        self.log = open(self.root / 'service.log', 'w+', encoding='utf-8')
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.process = None
         self.start()
 
-    def start(self, password=None):
+    def start(self, password=None, bind=None):
         environment = os.environ.copy()
         environment.pop('PICSOC_PASSWORD', None)
         environment.pop('PICSOC_BIND', None)
@@ -69,7 +71,7 @@ class SmokeTest(unittest.TestCase):
         if password:
             environment['PICSOC_PASSWORD'] = password
             self.authorization = 'Basic ' + base64.b64encode(f'picsoc:{password}'.encode()).decode()
-        self.process = subprocess.Popen([self.binary, '--bind', f'127.0.0.1:{self.port}', '--data-dir', str(self.root / 'data'), '--no-open', '--workers', '1'], stdout=self.log, stderr=subprocess.STDOUT, env=environment)
+        self.process = subprocess.Popen([self.binary, '--bind', bind or f'127.0.0.1:{self.port}', '--data-dir', str(self.root / 'data'), '--no-open', '--workers', '1'], stdout=self.log, stderr=subprocess.STDOUT, env=environment)
         for _ in range(150):
             try:
                 if self.request('/api/health')['ok']:
@@ -96,15 +98,15 @@ class SmokeTest(unittest.TestCase):
         self.log.close()
         self.temp.cleanup()
 
-    def request(self, path, method='GET', body=None, headers=None, raw=False):
+    def request(self, path, method='GET', body=None, headers=None, raw=False, opener=None, basic=True):
         headers = dict(headers or {})
-        if self.authorization and 'Authorization' not in headers:
+        if basic and self.authorization and 'Authorization' not in headers:
             headers['Authorization'] = self.authorization
         if body is not None:
             body = json.dumps(body, ensure_ascii=False).encode()
             headers['Content-Type'] = 'application/json'
         request = urllib.request.Request(self.base + path, data=body, method=method, headers=headers)
-        with self.opener.open(request, timeout=10) as response:
+        with (opener or self.opener).open(request, timeout=10) as response:
             data = response.read()
             return (response.status, dict(response.headers), data) if raw else json.loads(data)
 
@@ -121,6 +123,24 @@ class SmokeTest(unittest.TestCase):
                 return assets['assets']
             time.sleep(0.1)
         self.fail(f'Scan did not produce {expected} assets')
+
+    def asset_query(self, **parameters):
+        parameters = {key: str(value).lower() if isinstance(value, bool) else value
+                      for key, value in parameters.items()}
+        return self.request('/api/assets?' + urllib.parse.urlencode(parameters))
+
+    def assert_asset_paths(self, expected, **parameters):
+        result = self.asset_query(limit=100, **parameters)
+        self.assertEqual(result['total'], len(expected), parameters)
+        self.assertEqual({item['relative_path'].replace('\\', '/') for item in result['assets']},
+                         set(expected), parameters)
+        return result
+
+    def assert_bad_query(self, **parameters):
+        with self.assertRaises(urllib.error.HTTPError) as response:
+            self.asset_query(**parameters)
+        self.assertEqual(response.exception.code, 400, parameters)
+        response.exception.close()
 
     def test_real_library_lifecycle(self):
         status, _, html = self.request('/', raw=True)
@@ -328,6 +348,391 @@ class SmokeTest(unittest.TestCase):
             response.exception.close()
         self.assertEqual({path: path.read_bytes() for path in originals}, originals)
 
+    def test_real_folder_tree_direct_files_empty_folders_and_rescan(self):
+        deep = self.library / '子文件夹' / '更深目录' / '末级'
+        deep.mkdir(parents=True)
+        write_png(deep / '参考.png')
+        (self.library / '子文件夹' / '空下层').mkdir()
+        sibling = self.library / '子文件夹副本'
+        sibling.mkdir()
+        write_png(sibling / '旁边.png')
+        literal = self.library / '百分%_目录'
+        (literal / '中文空目录').mkdir(parents=True)
+        write_png(literal / '字面路径.png')
+        wildcard = self.library / '百分AB目录'
+        wildcard.mkdir()
+        write_png(wildcard / '不能混入.png')
+        (self.library / '纯空目录' / '空子目录').mkdir(parents=True)
+        text_only = self.library / '没有图片'
+        text_only.mkdir()
+        (text_only / '说明.txt').write_text('Not an image', encoding='utf-8')
+        expected_folders = {
+            'Cursor A': (0, 0, False), 'Cursor B': (0, 0, False), 'Cursor C': (0, 0, False),
+            '子文件夹': (2, 1, True), '子文件夹副本': (1, 1, False),
+            '百分%_目录': (1, 1, True), '百分AB目录': (1, 1, False),
+            '纯空目录': (0, 0, True), '没有图片': (0, 0, False),
+        }
+        for name in ('Cursor A', 'Cursor B', 'Cursor C'):
+            (self.library / name).mkdir()
+        total_assets = 7
+        if os.name != 'nt':
+            # A backslash is a literal filename character on Unix, not a folder separator.
+            backslash_folder = r'反\斜杠目录'
+            (self.library / backslash_folder).mkdir()
+            write_png(self.library / backslash_folder / '参考.png')
+            expected_folders[backslash_folder] = (1, 1, False)
+            total_assets += 1
+
+        library = self.request('/api/libraries', 'POST', {'name': '真实目录树', 'path': str(self.library)})
+        library_id = library['id']
+        self.wait_scan(library_id, total_assets)
+        folders_url = f'/api/libraries/{library_id}/folders'
+
+        def folders(parent=''):
+            result = self.request(folders_url + '?' + urllib.parse.urlencode({'parent': parent}))
+            self.assertEqual(result['parent'].replace('\\', '/'), parent.replace('\\', '/'))
+            self.assertFalse(result['truncated'])
+            return result, {item['name']: item for item in result['folders']}
+
+        root, children = folders()
+        self.assertEqual(root['separator'], os.sep)
+        self.assertEqual(root['direct_asset_count'], 2)
+        self.assertEqual(set(children), set(expected_folders))
+        for name, (total, direct_count, has_children) in expected_folders.items():
+            with self.subTest(folder=name):
+                child = children[name]
+                self.assertIsNone(child['parent'])
+                self.assertEqual(child['path'], name)
+                self.assertEqual((child['asset_count'], child['direct_asset_count'], child['has_children']),
+                                 (total, direct_count, has_children))
+
+        def paginated_folders(parent='', cursor=None, expected_direct_count=2):
+            seen = set()
+            collected = []
+            for _ in range(20):
+                parameters = {'parent': parent, 'limit': 2}
+                if cursor is not None:
+                    parameters['cursor'] = cursor
+                page = self.request(folders_url + '?' + urllib.parse.urlencode(parameters))
+                self.assertEqual(page['parent'].replace('\\', '/'), parent.replace('\\', '/'))
+                self.assertEqual(page['separator'], os.sep)
+                self.assertEqual(page['direct_asset_count'], expected_direct_count)
+                self.assertLessEqual(len(page['folders']), 2)
+                self.assertEqual(page['truncated'], page['next_cursor'] is not None)
+                collected.extend(page['folders'])
+                next_cursor = page['next_cursor']
+                if next_cursor is None:
+                    self.assertEqual(len({item['path'] for item in collected}), len(collected))
+                    return collected
+                self.assertTrue(page['folders'])
+                self.assertEqual(next_cursor, page['folders'][-1]['path'])
+                self.assertNotIn(next_cursor, seen, 'Folder cursor did not advance')
+                seen.add(next_cursor)
+                cursor = next_cursor
+            self.fail('Folder pagination did not finish')
+
+        pages = paginated_folders()
+        self.assertEqual([item['path'] for item in pages], sorted(item['path'] for item in children.values()))
+        self.assertEqual({item['name']: item for item in pages}, children)
+        first_page = self.request(folders_url + '?' + urllib.parse.urlencode({'limit': 2}))
+        deleted_cursor = first_page['next_cursor']
+        self.assertEqual(deleted_cursor, 'Cursor B')
+        for parameters in [
+            {'cursor': '../escape'}, {'cursor': '/absolute'},
+            {'cursor': '子文件夹/更深目录'},
+            {'parent': '子文件夹', 'cursor': '没有图片'},
+            {'parent': '子文件夹', 'cursor': '子文件夹副本/子目录'},
+            {'limit': 0}, {'limit': 1001}, {'limit': 'invalid'},
+        ]:
+            with self.subTest(folder_page_invalid=parameters):
+                with self.assertRaises(urllib.error.HTTPError) as response:
+                    self.request(folders_url + '?' + urllib.parse.urlencode(parameters))
+                self.assertEqual(response.exception.code, 400)
+                response.exception.close()
+
+        branch, branch_children = folders('子文件夹')
+        self.assertEqual(branch['direct_asset_count'], 1)
+        self.assertEqual(set(branch_children), {'更深目录', '空下层'})
+        self.assertEqual((branch_children['更深目录']['asset_count'],
+                          branch_children['更深目录']['direct_asset_count'],
+                          branch_children['更深目录']['has_children']), (1, 0, True))
+        self.assertEqual(branch_children['更深目录']['parent'], '子文件夹')
+        self.assertEqual({item['name']: item for item in paginated_folders('子文件夹', expected_direct_count=1)},
+                         branch_children)
+        middle, middle_children = folders('子文件夹/更深目录')
+        self.assertEqual(middle['direct_asset_count'], 0)
+        self.assertEqual(set(middle_children), {'末级'})
+        self.assertEqual((middle_children['末级']['asset_count'],
+                          middle_children['末级']['direct_asset_count'],
+                          middle_children['末级']['has_children']), (1, 1, False))
+        leaf, leaf_children = folders('子文件夹/更深目录/末级')
+        self.assertEqual(leaf['direct_asset_count'], 1)
+        self.assertFalse(leaf_children)
+        empty, empty_children = folders('纯空目录')
+        self.assertEqual(empty['direct_asset_count'], 0)
+        self.assertEqual(set(empty_children), {'空子目录'})
+        self.assertEqual((empty_children['空子目录']['asset_count'],
+                          empty_children['空子目录']['direct_asset_count'],
+                          empty_children['空子目录']['has_children']), (0, 0, False))
+
+        self.assert_asset_paths({'风景.png', '动态.gif'}, library_id=library_id, folder='', folder_recursive=False)
+        self.assertEqual(self.asset_query(library_id=library_id, folder='')['total'], total_assets)
+        self.assert_asset_paths({'子文件夹/风景.png', '子文件夹/更深目录/末级/参考.png'},
+                                library_id=library_id, folder='子文件夹')
+        self.assert_asset_paths({'子文件夹/风景.png'}, library_id=library_id,
+                                folder='子文件夹', folder_recursive=False)
+        self.assert_asset_paths({'子文件夹/更深目录/末级/参考.png'}, library_id=library_id,
+                                folder='子文件夹/更深目录')
+        self.assert_asset_paths(set(), library_id=library_id,
+                                folder='子文件夹/更深目录', folder_recursive=False)
+        self.assert_asset_paths({'百分%_目录/字面路径.png'}, library_id=library_id, folder='百分%_目录')
+        self.assert_asset_paths(set(), library_id=library_id, folder='纯空目录')
+        if os.name != 'nt':
+            literal_result = self.asset_query(library_id=library_id, folder=backslash_folder,
+                                              folder_recursive=False)
+            self.assertEqual(literal_result['total'], 1)
+            self.assertEqual([asset['relative_path'] for asset in literal_result['assets']],
+                             [backslash_folder + '/参考.png'])
+            backslash_branch, backslash_children = folders(backslash_folder)
+            self.assertEqual(backslash_branch['parent'], backslash_folder)
+            self.assertEqual(backslash_branch['direct_asset_count'], 1)
+            self.assertFalse(backslash_children)
+
+        # Rescanning must update directory metadata as well as the asset list, including deletions.
+        (deep / '参考.png').unlink()
+        deep.rmdir()
+        deep.parent.rmdir()
+        (self.library / '纯空目录' / '空子目录').rmdir()
+        (self.library / '纯空目录').rmdir()
+        (self.library / deleted_cursor).rmdir()
+        (self.library / '新空目录' / '尚无图片').mkdir(parents=True)
+        write_png(self.library / '子文件夹' / '新增.png')
+        self.request(f'/api/libraries/{library_id}/scan', 'POST')
+        self.wait_scan(library_id, total_assets)
+        _, children = folders()
+        self.assertNotIn('纯空目录', children)
+        self.assertNotIn(deleted_cursor, children)
+        self.assertIn('新空目录', children)
+        self.assertEqual((children['新空目录']['asset_count'],
+                          children['新空目录']['direct_asset_count'],
+                          children['新空目录']['has_children']), (0, 0, True))
+        self.assertEqual((children['子文件夹']['asset_count'], children['子文件夹']['direct_asset_count']), (2, 2))
+        after_deleted_cursor = paginated_folders(cursor=deleted_cursor)
+        expected_after_cursor = {name: child for name, child in children.items() if child['path'] > deleted_cursor}
+        self.assertEqual({item['name']: item for item in after_deleted_cursor}, expected_after_cursor)
+        self.assertEqual([item['path'] for item in after_deleted_cursor],
+                         sorted(item['path'] for item in expected_after_cursor.values()))
+        branch, branch_children = folders('子文件夹')
+        self.assertEqual(branch['direct_asset_count'], 2)
+        self.assertEqual(set(branch_children), {'空下层'})
+        self.assert_asset_paths({'子文件夹/风景.png', '子文件夹/新增.png'},
+                                library_id=library_id, folder='子文件夹', folder_recursive=False)
+
+        self.stop()
+        self.start()
+        self.wait_scan(library_id, total_assets)
+        _, children = folders()
+        self.assertIn('新空目录', children)
+        self.assertNotIn('纯空目录', children)
+        self.assertEqual(children['新空目录']['asset_count'], 0)
+
+    def test_advanced_image_filters_combination_pagination_and_validation(self):
+        directory = self.library / '筛选'
+        (directory / '深层').mkdir(parents=True)
+        dimensions = {
+            '筛选/横图16比9.png': (160, 90), '筛选/接近16比9.png': (158, 90),
+            '筛选/超出下限.png': (156, 90), '筛选/超出上限.png': (164, 90),
+            '筛选/竖图9比16.png': (90, 160), '筛选/正方形.png': (100, 100),
+            '筛选/大图16比9.png': (640, 360), '筛选/深层/另一个16比9.png': (160, 90),
+            '筛选/比例下边界.png': (196, 100), '筛选/比例上边界.png': (204, 100),
+            '风景.png': (64, 32), '子文件夹/风景.png': (32, 64), '动态.gif': (1, 1),
+        }
+        for relative, (width, height) in dimensions.items():
+            if relative.startswith('筛选/'):
+                write_png(self.library / relative, width, height)
+        library = self.request('/api/libraries', 'POST', {'name': '筛选测试', 'path': str(self.library)})
+        library_id = library['id']
+        assets = self.wait_scan(library_id, len(dimensions))
+        by_path = {asset['relative_path'].replace('\\', '/'): asset for asset in assets}
+        for relative, (width, height) in dimensions.items():
+            self.assertEqual((by_path[relative]['width'], by_path[relative]['height']), (width, height))
+
+        for orientation, predicate in [('landscape', lambda w, h: w > h),
+                                        ('portrait', lambda w, h: w < h),
+                                        ('square', lambda w, h: w == h)]:
+            with self.subTest(orientation=orientation):
+                self.assert_asset_paths({name for name, (w, h) in dimensions.items() if predicate(w, h)},
+                                        library_id=library_id, orientation=orientation)
+        ratio_paths = {'筛选/横图16比9.png', '筛选/接近16比9.png',
+                       '筛选/大图16比9.png', '筛选/深层/另一个16比9.png'}
+        self.assert_asset_paths(ratio_paths, library_id=library_id, aspect_ratio='16:9')
+        self.assert_asset_paths({'筛选/竖图9比16.png'}, library_id=library_id, aspect_ratio='9:16')
+        self.assert_asset_paths({'筛选/正方形.png', '动态.gif'}, library_id=library_id, aspect_ratio='1:1')
+        self.assert_asset_paths({'风景.png', '筛选/比例下边界.png', '筛选/比例上边界.png'},
+                                library_id=library_id, aspect_ratio='2:1')
+        self.assert_asset_paths(ratio_paths, library_id=library_id, aspect_ratio='1.6:0.9')
+
+        for key, predicate in [
+            ('min_width', lambda w, h: w >= 160), ('max_width', lambda w, h: w <= 160),
+            ('min_height', lambda w, h: h >= 100), ('max_height', lambda w, h: h <= 100),
+        ]:
+            threshold = 160 if 'width' in key else 100
+            with self.subTest(dimension=key):
+                self.assert_asset_paths({name for name, (w, h) in dimensions.items() if predicate(w, h)},
+                                        library_id=library_id, **{key: threshold})
+        self.assert_asset_paths({'筛选/横图16比9.png', '筛选/深层/另一个16比9.png'},
+                                library_id=library_id, min_width=160, max_width=160,
+                                min_height=90, max_height=90)
+        self.assert_asset_paths(set(), library_id=library_id, min_width=10_000)
+
+        sizes = {name: (self.library / name).stat().st_size for name in dimensions}
+        threshold = sorted(set(sizes.values()))[len(set(sizes.values())) // 2]
+        self.assertTrue(any(size < threshold for size in sizes.values()))
+        self.assertTrue(any(size > threshold for size in sizes.values()))
+        for key, predicate in [('min_size', lambda size: size >= threshold),
+                               ('max_size', lambda size: size <= threshold)]:
+            with self.subTest(size=key):
+                self.assert_asset_paths({name for name, size in sizes.items() if predicate(size)},
+                                        library_id=library_id, **{key: threshold})
+        self.assert_asset_paths({name for name, size in sizes.items() if size == threshold},
+                                library_id=library_id, min_size=threshold, max_size=threshold)
+        self.assert_asset_paths(set(), library_id=library_id, max_size=0)
+        for sort, field, descending in [('size', 'size', True), ('size_asc', 'size', False),
+                                         ('width', 'width', True), ('height', 'height', True),
+                                         ('pixels', None, True)]:
+            with self.subTest(sort=sort):
+                result = self.asset_query(library_id=library_id, sort=sort, limit=100)
+                self.assertEqual(result['total'], len(dimensions))
+                values = [asset[field] if field else asset['width'] * asset['height']
+                          for asset in result['assets']]
+                self.assertEqual(values, sorted(values, reverse=descending))
+
+        selected = {'筛选/横图16比9.png', '筛选/深层/另一个16比9.png'}
+        for name in selected:
+            self.request(f"/api/assets/{by_path[name]['id']}", 'PATCH', {'favorite': True, 'tags': ['中文筛选']})
+        combined = dict(library_id=library_id, folder='筛选', folder_recursive=True,
+                        orientation='landscape', aspect_ratio='16:9', min_width=160, max_width=200,
+                        min_height=80, max_height=100, min_size=0, max_size=max(sizes.values()),
+                        favorite=True, tag='中文筛选', format='png', q='16比9', sort='name')
+        self.assert_asset_paths(selected, **combined)
+        first = self.asset_query(**combined, limit=1, offset=0)
+        second = self.asset_query(**combined, limit=1, offset=1)
+        end = self.asset_query(**combined, limit=1, offset=2)
+        for result, offset in [(first, 0), (second, 1), (end, 2)]:
+            self.assertEqual((result['total'], result['limit'], result['offset']), (2, 1, offset))
+        self.assertEqual(len(first['assets']), 1)
+        self.assertEqual(len(second['assets']), 1)
+        self.assertEqual({item['relative_path'].replace('\\', '/')
+                          for item in first['assets'] + second['assets']}, selected)
+        self.assertEqual(end['assets'], [])
+        combined['folder_recursive'] = False
+        self.assert_asset_paths({'筛选/横图16比9.png'}, **combined)
+        combined['orientation'] = 'portrait'
+        self.assert_asset_paths(set(), **combined)
+
+        for parameters in [
+            {'orientation': 'diagonal'}, {'sort': 'unsupported'}, {'format': 'unsupported'},
+            {'aspect_ratio': 'wide'}, {'aspect_ratio': '0:9'},
+            {'aspect_ratio': '16:0'}, {'aspect_ratio': '-1:1'}, {'aspect_ratio': 'nan:1'},
+            {'aspect_ratio': 'inf:1'}, {'aspect_ratio': '16:9:1'},
+            {'min_width': -1}, {'max_height': -1}, {'min_height': '1.5'},
+            {'max_width': 4_294_967_296}, {'min_width': 200, 'max_width': 100},
+            {'min_height': 200, 'max_height': 100}, {'min_size': -1}, {'max_size': -1},
+            {'min_size': 200, 'max_size': 100}, {'min_size': 9_223_372_036_854_775_808},
+            {'folder_recursive': 'not-a-bool'}, {'folder': '../escape'},
+            {'folder': '/absolute'}, {'folder': '筛选/../子文件夹'},
+        ]:
+            with self.subTest(invalid=parameters):
+                self.assert_bad_query(library_id=library_id, **parameters)
+        self.assert_bad_query(folder='筛选')
+        self.assert_bad_query(folder_recursive=False)
+
+    def test_startup_log_reports_actual_listener(self):
+        self.stop()
+        self.log.seek(0, os.SEEK_END)
+        offset = self.log.tell()
+        self.start(password='listener-test-password', bind=f'0.0.0.0:{self.port}')
+        self.log.flush()
+        self.log.seek(offset)
+        output = self.log.read()
+        self.assertIn(f'0.0.0.0:{self.port}', output)
+        self.assertIn(f'127.0.0.1:{self.port}', output)
+
+    def test_filename_exclusions_are_literal_and_compose_with_other_filters(self):
+        directory = self.root / '噪音过滤素材'
+        names = {
+            'normal.png', 'map.png', 'MAP-preview.png', 'roadmap.png', 'bumP.png',
+            'roughness.png', '贴图_法线.png', '百分%素材.png', '百分XX素材.png',
+            'under_score.png', 'underscore.png', '含map的目录/normal.png', '竖图.png',
+        }
+        if os.name != 'nt':
+            names.add(r'反\斜杠.png')
+        for relative in names:
+            path = directory / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_png(path, 90 if relative == '竖图.png' else 160,
+                      160 if relative == '竖图.png' else 90)
+        library = self.request('/api/libraries', 'POST', {'name': '文件名排除测试', 'path': str(directory)})
+        library_id = library['id']
+        assets = self.wait_scan(library_id, len(names))
+        by_path = {asset['relative_path'].replace(os.sep, '/'): asset for asset in assets}
+
+        def expected_without(*words):
+            # Test names use only ASCII and Chinese; ASCII folding reproduces the documented matching.
+            return {name for name in names if not any(
+                word.lower() in Path(name).name.lower() for word in words)}
+
+        def check_exclusions(value, expected):
+            result = self.asset_query(library_id=library_id, exclude_names=value, limit=100)
+            self.assertEqual(result['total'], len(expected), value)
+            # Preserve literal backslashes on Unix while normalizing Windows directory separators.
+            self.assertEqual({asset['relative_path'].replace(os.sep, '/') for asset in result['assets']},
+                             expected, value)
+
+        check_exclusions('', names)
+        check_exclusions('\n \n\t', names)
+        for value, words in [
+            (' map ', ['map']), ('MAP', ['map']), ('法线', ['法线']),
+            (' map \n\nbump\n法线\nmap ', ['map', 'bump', '法线']),
+            (' % \n', ['%']), ('_', ['_']), ('%_', ['%_']), ('\\', ['\\']),
+        ]:
+            with self.subTest(exclusions=value):
+                check_exclusions(value, expected_without(*words))
+        check_exclusions(' map \n' * 51, expected_without('map'))
+        check_exclusions('\n'.join(f'missing-{number}' for number in range(50)), names)
+        check_exclusions('图' * 100, names)
+        boundary_words = '\n'.join(f'{number:02d}' + '图' * 98 for number in range(13))
+        boundary_value = boundary_words + ' ' * (4096 - len(boundary_words.encode('utf-8')))
+        self.assertEqual(len(boundary_value.encode('utf-8')), 4096)
+        check_exclusions(boundary_value, names)
+
+        # The normal filenames remain visible even though their directory or tags contain "map".
+        combined_names = {'normal.png', '含map的目录/normal.png', 'map.png', '竖图.png'}
+        for relative in combined_names:
+            self.request(f"/api/assets/{by_path[relative]['id']}", 'PATCH',
+                         {'favorite': True, 'tags': ['map', '中文标签']})
+        combined = dict(library_id=library_id, folder='', folder_recursive=True,
+                        exclude_names='map', favorite=True, tag='map', q='map', format='png',
+                        orientation='landscape', aspect_ratio='16:9', min_width=160,
+                        max_width=160, min_height=90, max_height=90, sort='name')
+        expected_combined = {'normal.png', '含map的目录/normal.png'}
+        self.assert_asset_paths(expected_combined, **combined)
+        pages = [self.asset_query(**combined, limit=1, offset=offset) for offset in range(3)]
+        for offset, result in enumerate(pages):
+            self.assertEqual((result['total'], result['offset'], result['limit']), (2, offset, 1))
+        self.assertEqual([len(page['assets']) for page in pages], [1, 1, 0])
+        self.assertEqual({asset['relative_path'].replace(os.sep, '/')
+                          for page in pages for asset in page['assets']}, expected_combined)
+
+        for value in ['图' * 101, '\n'.join(f'unique-{number}' for number in range(51)),
+                      boundary_value + ' ', 'map\0normal']:
+            with self.subTest(invalid_exclusions=value[:30]):
+                with self.assertRaises(urllib.error.HTTPError) as response:
+                    self.asset_query(library_id=library_id, exclude_names=value)
+                self.assertEqual(response.exception.code, 400)
+                self.assertEqual(json.loads(response.exception.read())['code'], 'invalid_excluded_names')
+                response.exception.close()
+
     def test_password_and_origin_guard(self):
         with self.assertRaises(urllib.error.HTTPError) as response:
             self.request('/api/libraries', 'POST', {'name': '跨站', 'path': str(self.library)},
@@ -340,13 +745,125 @@ class SmokeTest(unittest.TestCase):
         response.exception.close()
         self.stop()
         self.start(password='test-only-password')
-        for path in ('/', '/api/health', '/api/assets'):
+        status, _, html = self.request('/', basic=False, raw=True)
+        self.assertEqual(status, 200)
+        self.assertIn(b'<!doctype html', html.lower())
+        for path in ('/api/health', '/api/assets', '/api/stats', '/api/libraries', '/api/tags'):
             with self.assertRaises(urllib.error.HTTPError) as response:
                 self.request(path, headers={'Authorization': ''}, raw=True)
             self.assertEqual(response.exception.code, 401)
-            self.assertIn('Basic', response.exception.headers['WWW-Authenticate'])
+            self.assertNotIn('WWW-Authenticate', response.exception.headers)
+            self.assertIn('error', json.loads(response.exception.read()))
             response.exception.close()
         self.assertTrue(self.request('/api/health')['ok'])
+
+    def test_cookie_login_logout_restart_and_basic_compatibility(self):
+        public_status = {'password_required': False, 'authenticated': True}
+        self.assertEqual(self.request('/api/auth/status', basic=False), public_status)
+        self.assertEqual(self.request('/api/auth/login', 'POST', {'password': ''}, basic=False), public_status)
+        self.assertEqual(self.request('/api/auth/logout', 'POST', basic=False), public_status)
+        library = self.request('/api/libraries', 'POST', {'name': '登录后访问素材', 'path': str(self.library)})
+        assets = self.wait_scan(library['id'], 3)
+        image = next(item for item in assets if item['relative_path'] == '风景.png')
+        original = (self.library / '风景.png').read_bytes()
+        self.stop()
+        password = 'browser-cookie-test-password'
+        self.start(password=password)
+
+        jar = http.cookiejar.CookieJar()
+        browser = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                               urllib.request.HTTPCookieProcessor(jar))
+
+        def browser_request(path, method='GET', body=None, headers=None, raw=False):
+            return self.request(path, method, body, headers, raw, opener=browser, basic=False)
+
+        def denied(path, method='GET', body=None, headers=None, expected=401, opener=browser):
+            with self.assertRaises(urllib.error.HTTPError) as response:
+                self.request(path, method, body, headers, opener=opener, basic=False)
+            self.assertEqual(response.exception.code, expected)
+            self.assertNotIn('WWW-Authenticate', response.exception.headers)
+            self.assertTrue(response.exception.headers['Content-Type'].startswith('application/json'))
+            result = json.loads(response.exception.read())
+            self.assertIn('error', result)
+            response.exception.close()
+            return result
+
+        locked_status = {'password_required': True, 'authenticated': False}
+        unlocked_status = {'password_required': True, 'authenticated': True}
+        self.assertEqual(browser_request('/api/auth/status'), locked_status)
+        status, _, html = browser_request('/', raw=True)
+        self.assertEqual(status, 200)
+        self.assertIn(b'<!doctype html', html.lower())
+        status, _, head_body = browser_request('/', method='HEAD', raw=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(head_body, b'')
+        web_assets = re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html.decode('utf-8'))
+        self.assertTrue(web_assets, 'Anonymous login page must load its JavaScript and styles')
+        for path in web_assets:
+            with self.subTest(anonymous_web_asset=path):
+                status, _, content = browser_request(path, raw=True)
+                self.assertEqual(status, 200)
+                self.assertTrue(content)
+        for path in ('/api/assets', '/api/stats', '/api/libraries', '/api/tags',
+                     image['original_url'], image['thumbnail_url']):
+            with self.subTest(anonymous=path):
+                denied(path)
+        error = denied('/api/auth/login', 'POST', {'password': 'wrong-password'})
+        self.assertEqual(error['code'], 'invalid_password')
+        self.assertFalse(list(jar))
+        for body in ({}, {'password': 123}):
+            denied('/api/auth/login', 'POST', body, expected=400)
+        denied('/api/auth/login', 'POST', {'password': password},
+               headers={'Origin': 'https://unrelated.example'}, expected=403)
+        self.assertEqual(browser_request('/api/auth/status'), locked_status)
+        self.assertFalse(list(jar))
+
+        status, headers, data = browser_request('/api/auth/login', 'POST', {'password': password},
+                                                headers={'Origin': self.base}, raw=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), unlocked_status)
+        cookie_header = next(value for key, value in headers.items() if key.lower() == 'set-cookie')
+        attributes = cookie_header.lower()
+        for attribute in ('picsoc_session=', 'httponly', 'samesite=strict', 'path=/', 'max-age=86400'):
+            self.assertIn(attribute, attributes)
+        self.assertEqual([cookie.name for cookie in jar], ['picsoc_session'])
+        old_session = '; '.join(f'{cookie.name}={cookie.value}' for cookie in jar)
+        self.assertEqual(browser_request('/api/auth/status'), unlocked_status)
+        self.assertEqual(browser_request('/api/assets')['total'], 3)
+        self.assertEqual(browser_request('/api/stats')['total_assets'], 3)
+        self.assertEqual([item['id'] for item in browser_request('/api/libraries')['libraries']], [library['id']])
+        self.assertEqual(browser_request(image['original_url'], raw=True)[2], original)
+        status, _, thumbnail = browser_request(image['thumbnail_url'], raw=True)
+        self.assertEqual(status, 200)
+        self.assertTrue(thumbnail.startswith(b'\xff\xd8') or thumbnail.startswith(b'\x89PNG'))
+        denied('/api/auth/logout', 'POST', headers={'Origin': 'https://unrelated.example'}, expected=403)
+        self.assertEqual(browser_request('/api/auth/status'), unlocked_status)
+
+        status, headers, data = browser_request('/api/auth/logout', 'POST',
+                                                headers={'Origin': self.base}, raw=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), locked_status)
+        cookie_header = next(value for key, value in headers.items() if key.lower() == 'set-cookie')
+        self.assertIn('max-age=0', cookie_header.lower())
+        self.assertFalse(list(jar))
+        self.assertEqual(browser_request('/api/auth/status'), locked_status)
+        denied('/api/assets')
+        # Replaying the former cookie must fail even if the client ignores the deletion header.
+        denied('/api/assets', headers={'Cookie': old_session}, opener=self.opener)
+
+        self.assertEqual(browser_request('/api/auth/login', 'POST', {'password': password}), unlocked_status)
+        self.assertTrue(list(jar))
+        restart_session = '; '.join(f'{cookie.name}={cookie.value}' for cookie in jar)
+        self.stop()
+        self.start(password=password)
+        self.assertEqual(browser_request('/api/auth/status'), locked_status)
+        denied('/api/assets')
+        denied('/api/assets', headers={'Cookie': restart_session}, opener=self.opener)
+        # The existing API authentication mechanism remains available to scripts after restart.
+        self.assertEqual(self.request('/api/assets')['total'], 3)
+        self.assertEqual(self.request(image['original_url'], raw=True)[2], original)
+        self.assertEqual(browser_request('/api/auth/login', 'POST', {'password': password}), unlocked_status)
+        self.assertEqual(browser_request('/api/assets')['total'], 3)
 
     def test_english_api_messages(self):
         roots = self.request('/api/directories', headers={'Accept-Language': 'en-US,en;q=0.9'})

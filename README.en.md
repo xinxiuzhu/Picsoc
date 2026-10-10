@@ -13,12 +13,14 @@ Build from source using the instructions below, or download a matching archive f
 - Add an existing folder using the service's folder picker or an absolute path.
 - Recursively index JPEG, PNG, GIF, WebP, BMP, and TIFF images.
 - Browse a virtualized image grid with thumbnails loaded on demand.
-- Search names, relative paths, and tags; filter by library, subfolder, format, favorite status, or tag.
+- Expand a sidebar folder tree, including empty directories; browse only the selected folder or include its descendants.
+- Search names, relative paths, and tags; combine library, folder, orientation, aspect ratio, pixel dimensions, file size, format, favorites, tags, and filename exclusions.
 - Store favorites and tags in SQLite; apply favorites and add/remove tags to a selection of images.
 - Preview images, navigate with arrow keys, copy relative paths, and download originals.
 - Keep GIF animation in the original preview. TIFF uses a thumbnail preview, with the original available for download.
 - Scan in the background, cancel an active scan, rescan manually, or use periodic incremental scans (every 300 seconds by default).
 - Use one worker by default and an optional shared password for remote access.
+- Sign in through a simple shared-password page and sign out when finished; without a password, open the library directly.
 
 The stack is Rust, Axum, Tokio, bundled SQLite, React, TypeScript, and Vite. Image processing uses the Rust `image` crate. Native runtime packages need no separate Node.js, SQLite, or libvips installation; Node.js is used to build the frontend.
 
@@ -48,7 +50,7 @@ For access from other devices on a trusted LAN:
 PICSOC_PASSWORD='replace-with-your-password' cargo run --locked --release -- --bind 0.0.0.0:3210 --no-open
 ```
 
-The login username is `picsoc`. The `scripts/build.sh` / `scripts/start.sh` helpers are also available, with `.ps1` equivalents on Windows.
+The browser shows a simple password login page; sessions last 24 hours and end on logout or service restart. Without a password, the library opens directly. Basic Auth scripts use the username `picsoc`. Startup logs show the actual listening address separately from the local browser URL. When a native service listens on `0.0.0.0`, it lists active IPv4 interfaces and their browser links, placing physical interfaces before virtual bridges and VPNs. Address detection does not need an external service and failures do not stop Picsoc. In Docker, detected addresses belong to the container; use the host IP and published port instead. The `scripts/build.sh` / `scripts/start.sh` helpers are also available, with `.ps1` equivalents on Windows.
 
 The default address is [http://127.0.0.1:3210](http://127.0.0.1:3210). The native service opens your system browser automatically. Keep the service running; closing the browser does not stop it. Press `Ctrl+C` in its terminal to stop the service.
 
@@ -56,7 +58,13 @@ Click **Add library** and select a folder containing your images, or enter an ab
 
 Apple Photos `.photoslibrary` packages are skipped, so you can add a `Pictures` folder containing one. To manage images from Photos, export them as JPEG, PNG, or TIFF into an ordinary folder and add that folder. The package itself and its internal folders cannot be added as libraries. See [Apple's export guide](https://support.apple.com/guide/photos/pht6e157c5f/mac).
 
-After scanning, browse a library's indexed subfolders and combine filters. Subfolder filtering includes descendants; empty folders are not listed. Batch actions add/remove tags and change favorites without changing original files. One batch supports up to 500 selected images; it succeeds fully or makes no metadata changes.
+After scanning, expand the arrow next to a library in the sidebar. Folders expand and select independently; counts include descendants. Use the breadcrumb and the **Include subfolders** toggle to change scope. Existing indexes migrate their image paths into folder records; a rescan adds previously unrecorded empty directories.
+
+Open **Filters** for landscape, portrait, square, preset/custom aspect ratios, pixel width/height ranges, and file size ranges. Aspect ratios allow a ±2% relative tolerance. Assets with unknown dimensions do not match orientation, ratio, or pixel filters until dimensions are available. Combine these conditions with search, format, tags, favorites, and folder scope, and remove individual active filters.
+
+Use **Exclude filenames** to hide unwanted assets. For example, `map` hides image names containing `map` or `MAP`. Separate terms with newlines or English/Chinese commas; this browser remembers the exclusions. Matching applies to the filename, with literal `%` and `_`, and does not match folder names or tags. Original files are retained.
+
+Batch actions add/remove tags and change favorites without changing original files. One batch supports up to 500 selected images; it succeeds fully or makes no metadata changes.
 
 ## Native packages
 
@@ -148,7 +156,7 @@ See [performance and the reproducible benchmark](docs/PERFORMANCE.md). Its recor
 | `--no-open` | — | Disable automatic browser opening |
 | `--version` | — | Print version and exit |
 
-For trusted LAN access, set the native bind address to `0.0.0.0:3210`, or set Docker's `PICSOC_HOST_BIND=0.0.0.0`. Configure a nonempty `PICSOC_PASSWORD`; the username is `picsoc`. Use the server's LAN address in the browser.
+For trusted LAN access, set the native bind address to `0.0.0.0:3210`, or set Docker's `PICSOC_HOST_BIND=0.0.0.0`. Configure a nonempty `PICSOC_PASSWORD` and enter it on the login page; Basic Auth scripts use `picsoc` as the username. Use the server's LAN address in the browser.
 
 Basic Auth over plain HTTP has no transport encryption. Use an HTTPS reverse proxy for access over untrusted networks, with the backend port restricted. There are no independent user accounts or per-library access controls. See [security](SECURITY.md) and the [operations guide](docs/OPERATIONS.md) before sharing access.
 

@@ -48,6 +48,6 @@ Windows x64 构建配置静态 C 运行时，并由发行流程检查直接 DLL 
 - `--version`：查看版本。
 - `--help`：查看完整帮助。
 
-局域网访问时使用 `--bind 0.0.0.0:3210`，并通过环境变量 `PICSOC_PASSWORD` 设置非空密码，登录用户名为 `picsoc`。HTTP Basic Auth 不提供传输加密，公网访问需通过 HTTPS 反向代理。完整的 Docker 与开发说明见仓库 README。
+局域网访问时使用 `--bind 0.0.0.0:3210`，并通过环境变量 `PICSOC_PASSWORD` 设置非空密码。浏览器登录页输入该密码即可，支持退出登录；未设置密码直接进入素材库。脚本 Basic Auth 用户名为 `picsoc`。HTTP 不提供传输加密，公网访问需通过 HTTPS 反向代理。完整的 Docker 与开发说明见仓库 README。
 
 许可证：Apache License 2.0，见同目录 `LICENSE`。

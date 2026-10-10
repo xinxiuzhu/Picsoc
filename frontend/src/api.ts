@@ -63,12 +63,17 @@ export interface LibraryFolder {
   name: string;
   parent: string | null;
   asset_count: number;
+  direct_asset_count: number;
+  has_children: boolean;
 }
 
 export interface LibraryFolders {
+  separator: string;
+  next_cursor: string | null;
   folders: LibraryFolder[];
   parent: string;
   truncated: boolean;
+  direct_asset_count: number;
 }
 
 export interface BatchChanges {
@@ -77,7 +82,20 @@ export interface BatchChanges {
   remove_tags?: string[];
 }
 
+export const AUTH_REQUIRED_EVENT = 'picsoc:authentication-required';
+let authGeneration = 0;
+
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const requestAuthGeneration = authGeneration;
   const headers = new Headers(options.headers);
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   headers.set('Accept-Language', i18n.language);
@@ -93,8 +111,10 @@ export async function api<T>(url: string, options: RequestInit = {}): Promise<T>
     } catch {
       // A proxy may return a plain-text error; retain the HTTP status.
     }
-    throw new Error(message);
+    if (response.status === 401 && !url.startsWith('/api/auth/') && !options.signal?.aborted && requestAuthGeneration === authGeneration) window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+    throw new ApiError(message, response.status);
   }
+  if (url === '/api/auth/login' || url === '/api/auth/logout') authGeneration++;
   return response.json() as Promise<T>;
 }
 

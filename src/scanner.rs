@@ -204,6 +204,7 @@ impl Scanner {
         }
         let generation = self.generation.fetch_add(1, Ordering::Relaxed);
         let mut records = Vec::with_capacity(100);
+        let mut directory_records = Vec::with_capacity(100);
         let mut traversal_error = None;
         let data_dir = self.data_dir.clone();
         let mut entries = WalkDir::new(&root)
@@ -238,6 +239,15 @@ impl Scanner {
                         traversal_error = Some(error.to_string());
                     }
                     continue;
+                }
+                let Some(relative) = entry.path().strip_prefix(&root)?.to_str() else {
+                    entries.skip_current_dir();
+                    traversal_error = Some("文件名无法转换为 Unicode".into());
+                    continue;
+                };
+                directory_records.push(relative.to_owned());
+                if directory_records.len() == 100 {
+                    self.flush_folders(id, generation, &mut directory_records)?;
                 }
             }
             if !entry.file_type().is_file() {
@@ -278,6 +288,7 @@ impl Scanner {
             return Ok(());
         }
         self.flush(id, generation, &mut records)?;
+        self.flush_folders(id, generation, &mut directory_records)?;
         // Never prune on incomplete traversal: an offline/unreadable folder must not erase metadata.
         if let Some(error) = traversal_error {
             bail!("扫描未完成，保留原有索引：{error}");
@@ -295,6 +306,20 @@ impl Scanner {
                 );
             }
         }
+        while !self.cancelled(id) {
+            if self.db.remove_unseen_folders_batch(id, generation)? == 0 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_folders(&self, id: i64, generation: i64, records: &mut Vec<String>) -> Result<()> {
+        if records.is_empty() || self.cancelled(id) {
+            return Ok(());
+        }
+        self.db.index_folders(id, generation, records)?;
+        records.clear();
         Ok(())
     }
 
@@ -419,6 +444,9 @@ mod tests {
         assert!(assets.iter().any(|a| a.name == "普通.png"));
         assert!(assets.iter().any(|a| a.name == "导入.png"));
         assert_eq!(scanner.status(id).processed, 2);
+        let indexed_folders = db.folders(id, "").unwrap().folders;
+        assert_eq!(indexed_folders.len(), 1);
+        assert_eq!(indexed_folders[0].name, "旅行.photoslibrary.backup");
     }
 
     #[tokio::test]
@@ -467,6 +495,10 @@ mod tests {
         assert!(db.asset(file_id).is_err());
         assert!(db.asset(former_package_id).is_err());
         assert_eq!(db.stats().unwrap().total_assets, 2);
+        let indexed_folders = db.folders(id, "").unwrap().folders;
+        assert_eq!(indexed_folders.len(), 1);
+        assert_eq!(indexed_folders[0].name, "中文.PHOTOSLIBRARY");
+        assert_eq!(indexed_folders[0].asset_count, 1);
         assert!(package.join("包内.png").exists());
     }
 
@@ -560,6 +592,7 @@ mod tests {
         let legacy = db
             .index_batch(id, 0, &[old_record(Path::new("已删除.png"))])
             .unwrap();
+        db.index_folders(id, 0, &["旧空目录".into()]).unwrap();
         let permissions = std::fs::metadata(&locked).unwrap().permissions();
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o0)).unwrap();
         // Root can bypass mode bits; only exercise the permission regression when denied.
@@ -578,6 +611,13 @@ mod tests {
                 .starts_with("扫描未完成，保留原有索引：")
         );
         assert!(db.asset(legacy[0].0.id).is_ok());
+        assert!(
+            db.folders(id, "")
+                .unwrap()
+                .folders
+                .iter()
+                .any(|folder| folder.name == "旧空目录")
+        );
         assert_eq!(db.stats().unwrap().total_assets, 2);
     }
 
@@ -639,5 +679,70 @@ mod tests {
         wait_scan(&scanner, library.id).await;
         assert_eq!(db.stats().unwrap().total_assets, 0);
         assert!(root.join("忽略.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn directory_scans_include_empty_folders_and_prune_removed_branches() {
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        std::fs::create_dir_all(root.join("空目录").join("深层空目录")).unwrap();
+        std::fs::create_dir_all(root.join("相册").join("嵌套")).unwrap();
+        std::fs::create_dir(root.join("相册2")).unwrap();
+        write_png(&root.join("root.png"));
+        write_png(&root.join("相册").join("a.png"));
+        write_png(&root.join("相册").join("嵌套").join("b.png"));
+        scanner.start(id);
+        wait_scan(&scanner, id).await;
+        let folders = db.folders(id, "").unwrap();
+        assert_eq!(folders.folders.len(), 3);
+        assert_eq!(folders.direct_asset_count, 1);
+        let empty = folders
+            .folders
+            .iter()
+            .find(|folder| folder.name == "空目录")
+            .unwrap();
+        assert_eq!(empty.asset_count, 0);
+        assert!(empty.has_children);
+        assert_eq!(
+            db.folders(id, "空目录").unwrap().folders[0].name,
+            "深层空目录"
+        );
+        let album = folders
+            .folders
+            .iter()
+            .find(|folder| folder.name == "相册")
+            .unwrap();
+        assert_eq!((album.asset_count, album.direct_asset_count), (2, 1));
+        std::fs::remove_dir_all(root.join("空目录")).unwrap();
+        std::fs::remove_dir_all(root.join("相册").join("嵌套")).unwrap();
+        scanner.start(id);
+        wait_scan(&scanner, id).await;
+        let folders = db.folders(id, "").unwrap();
+        assert_eq!(folders.folders.len(), 2);
+        let album = folders
+            .folders
+            .iter()
+            .find(|folder| folder.name == "相册")
+            .unwrap();
+        assert!(!album.has_children);
+        assert_eq!((album.asset_count, album.direct_asset_count), (1, 1));
+        assert!(root.join("相册2").exists());
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_scan_keeps_existing_folders_and_assets() {
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        db.index_folders(id, 0, &["旧空目录".into()]).unwrap();
+        let indexed = db
+            .index_batch(id, 0, &[old_record(&Path::new("旧目录").join("旧图.png"))])
+            .unwrap();
+        // Keep the traversal queued so cancellation deterministically happens before any pruning.
+        let permit = scanner.gate.clone().acquire_owned().await.unwrap();
+        scanner.start(id);
+        scanner.cancel(id);
+        drop(permit);
+        wait_scan(&scanner, id).await;
+        assert!(db.asset(indexed[0].0.id).is_ok());
+        assert_eq!(db.folders(id, "").unwrap().folders.len(), 2);
+        assert!(!root.join("旧目录").exists());
     }
 }

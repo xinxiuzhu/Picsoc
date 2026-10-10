@@ -3,24 +3,39 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle, ArrowUp, Check, ChevronDown, ChevronRight, Folder, Grid2X2, Grid3X3,
-  HardDrive, Images, Languages, LayoutGrid, ListChecks, LoaderCircle, Menu, MoreHorizontal, Plus,
+  HardDrive, Images, LayoutGrid, ListChecks, LoaderCircle, LogOut, Menu, Plus,
   RefreshCw, Search, SlidersHorizontal, Star, Tag, Trash2, X,
 } from 'lucide-react';
 import { api, errorMessage, formatSize } from './api';
-import type { Asset, BatchChanges, Library, LibraryFolder, LibraryFolders, Stats, Tag as AssetTag } from './api';
+import type { Asset, BatchChanges, Library, Stats, Tag as AssetTag } from './api';
 import { AddLibraryDialog, AssetCard, AssetPreview, BatchTagsDialog, Dialog, EmptyState } from './components';
 import { useAssets } from './useAssets';
+import { LibraryTree, folderBreadcrumbs } from './LibraryTree';
+import { FilterPanel, EMPTY_IMAGE_FILTERS, appendImageFilters, parseExcludedNames, excludedNamesError, SORT_OPTIONS, SORT_KEYS } from './FilterPanel';
+import type { ImageFilters } from './FilterPanel';
+import { LanguageMenu } from './LanguageMenu';
 
 type Category = 'all' | 'favorites';
 const EMPTY_STATS: Stats = { total_assets: 0, total_size: 0, total_favorites: 0, total_libraries: 0 };
 const MAX_SELECTION = 500;
+const EXCLUDED_NAMES_KEY = 'picsoc-excluded-names';
+
+function getSavedExcludedNames(): string {
+  try {
+    const value = localStorage.getItem(EXCLUDED_NAMES_KEY) ?? '';
+    return excludedNamesError(value) ? '' : parseExcludedNames(value).join('\n');
+  } catch { return ''; }
+}
 
 function getSavedDensity(): number {
-  try { return Number(localStorage.getItem('picsoc-density')) || 220; }
+  try {
+    const value = Number(localStorage.getItem('picsoc-density'));
+    return [160, 220, 280].includes(value) ? value : 220;
+  }
   catch { return 220; }
 }
 
-export default function App() {
+export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const { t, i18n } = useTranslation();
   const number = (value: number) => value.toLocaleString(i18n.resolvedLanguage?.startsWith('en') ? 'en-US' : 'zh-CN');
   const [libraries, setLibraries] = useState<Library[]>([]);
@@ -35,6 +50,12 @@ export default function App() {
   const [format, setFormat] = useState('');
   const [sort, setSort] = useState('modified');
   const [selectedTag, setSelectedTag] = useState('');
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [excludedNames, setExcludedNames] = useState(getSavedExcludedNames);
+  const excludedKeywords = useMemo(() => parseExcludedNames(excludedNames), [excludedNames]);
+  const [imageFilters, setImageFilters] = useState<ImageFilters>({ ...EMPTY_IMAGE_FILTERS });
+  const [showFilters, setShowFilters] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [density, setDensity] = useState(getSavedDensity);
   const [showAdd, setShowAdd] = useState(false);
   const [managedLibrary, setManagedLibrary] = useState<Library | null>(null);
@@ -51,14 +72,11 @@ export default function App() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [showBatchTags, setShowBatchTags] = useState(false);
   const [folder, setFolder] = useState('');
-  const [folderTrail, setFolderTrail] = useState<LibraryFolder[]>([]);
-  const [folders, setFolders] = useState<LibraryFolder[]>([]);
-  const [foldersTruncated, setFoldersTruncated] = useState(false);
-  const [foldersLoading, setFoldersLoading] = useState(false);
-  const [foldersError, setFoldersError] = useState<string | null>(null);
-  const [showAllFolders, setShowAllFolders] = useState(false);
-  const foldersController = useRef<AbortController | null>(null);
-  const foldersGeneration = useRef(0);
+  const [folderRecursive, setFolderRecursive] = useState(true);
+  const [folderSeparator, setFolderSeparator] = useState('/');
+  const [folderDirectCount, setFolderDirectCount] = useState<number | null>(null);
+  const [foldersRevision, setFoldersRevision] = useState(0);
+  const folderTrail = useMemo(() => folderBreadcrumbs(folder, folderSeparator), [folder, folderSeparator]);
   const scrollElement = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -87,15 +105,26 @@ export default function App() {
     const parameters = new URLSearchParams({ sort });
     if (debouncedSearch.trim()) parameters.set('q', debouncedSearch.trim());
     if (libraryId !== null) parameters.set('library_id', String(libraryId));
-    if (libraryId !== null && folder) parameters.set('folder', folder);
-    if (category === 'favorites') parameters.set('favorite', 'true');
+    if (libraryId !== null) {
+      parameters.set('folder', folder);
+      parameters.set('folder_recursive', String(folderRecursive));
+    }
+    if (category === 'favorites' || favoriteOnly) parameters.set('favorite', 'true');
     if (format) parameters.set('format', format);
     if (selectedTag) parameters.set('tag', selectedTag);
+    if (excludedNames) parameters.set('exclude_names', excludedNames);
+    appendImageFilters(parameters, imageFilters);
     return parameters.toString();
-  }, [debouncedSearch, libraryId, category, format, sort, selectedTag, folder]);
+  }, [debouncedSearch, libraryId, category, format, sort, selectedTag, folder, folderRecursive, imageFilters, favoriteOnly, excludedNames]);
   const assets = useAssets(query);
   const refreshAssets = useRef(assets.refresh);
   refreshAssets.current = assets.refresh;
+  useEffect(() => {
+    try {
+      if (excludedNames) localStorage.setItem(EXCLUDED_NAMES_KEY, excludedNames);
+      else localStorage.removeItem(EXCLUDED_NAMES_KEY);
+    } catch { /* Filtering also works when browser storage is unavailable. */ }
+  }, [excludedNames]);
 
   const notify = useCallback((text: string, error = false) => {
     setToast({ text, error });
@@ -121,34 +150,9 @@ export default function App() {
     if (tagResult.status === 'fulfilled') setTags(tagResult.value.tags);
   }, []);
 
-  const loadFolders = useCallback(async () => {
-    foldersController.current?.abort();
-    const requestGeneration = ++foldersGeneration.current;
-    if (libraryId === null) {
-      setFolders([]); setFoldersError(null); setFoldersLoading(false); setFoldersTruncated(false);
-      return;
-    }
-    const controller = new AbortController();
-    foldersController.current = controller;
-    setFoldersLoading(true);
-    try {
-      const result = await api<LibraryFolders>(`/api/libraries/${libraryId}/folders?parent=${encodeURIComponent(folder)}`, { signal: controller.signal });
-      if (controller.signal.aborted || requestGeneration !== foldersGeneration.current) return;
-      setFolders(result.folders); setFoldersTruncated(result.truncated); setFoldersError(null);
-    } catch (cause) {
-      if (!controller.signal.aborted && requestGeneration === foldersGeneration.current) setFoldersError(errorMessage(cause));
-    } finally {
-      if (!controller.signal.aborted && requestGeneration === foldersGeneration.current) setFoldersLoading(false);
-    }
-  }, [libraryId, folder, i18n.resolvedLanguage]);
+  const loadFolders = useCallback(async () => { setFoldersRevision(previous => previous + 1); }, []);
   const refreshFolders = useRef(loadFolders);
   refreshFolders.current = loadFolders;
-
-  useEffect(() => {
-    setFolders([]); setShowAllFolders(false);
-    void loadFolders();
-    return () => { foldersGeneration.current++; foldersController.current?.abort(); };
-  }, [loadFolders]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -190,7 +194,7 @@ export default function App() {
 
   useEffect(() => {
     if (metadataLoaded && libraryId !== null && !libraries.some(item => item.id === libraryId)) {
-      setLibraryId(null); setFolder(''); setFolderTrail([]);
+      setLibraryId(null); setFolder(''); setFolderDirectCount(null);
     }
     if (cancelingLibraryId !== null && !libraries.some(item => item.id === cancelingLibraryId && item.scan.state === 'scanning')) {
       setCancelingLibraryId(null);
@@ -233,10 +237,10 @@ export default function App() {
 
   const assetUpdated = (asset: Asset) => {
     assets.update(asset);
-    const noLongerMatches = (category === 'favorites' && !asset.favorite) || (Boolean(selectedTag) && !asset.tags.includes(selectedTag));
+    const noLongerMatches = ((category === 'favorites' || favoriteOnly) && !asset.favorite) || (Boolean(selectedTag) && !asset.tags.includes(selectedTag));
     setSelected(previous => previous?.asset.id === asset.id ? noLongerMatches ? null : { ...previous, asset } : previous);
     void loadMetadata();
-    if (category === 'favorites' || selectedTag) assets.refresh();
+    if (category === 'favorites' || favoriteOnly || selectedTag) assets.refresh();
   };
 
   const favorite = async (asset: Asset) => {
@@ -252,16 +256,22 @@ export default function App() {
 
   const setScope = (nextCategory: Category, nextLibrary: number | null) => {
     setCategory(nextCategory); setLibraryId(nextLibrary); setSidebarOpen(false);
-    setFolder(''); setFolderTrail([]);
+    setFolder(''); setFolderDirectCount(null);
   };
   const setGridDensity = (value: number) => {
     setDensity(value);
     try { localStorage.setItem('picsoc-density', String(value)); } catch { /* Storage may be disabled. */ }
   };
-  const resetFilters = () => {
+  const clearFilters = () => {
     setSearch(''); setDebouncedSearch(''); setFormat(''); setSelectedTag('');
+    setFavoriteOnly(false);
+    setExcludedNames('');
+    setImageFilters({ ...EMPTY_IMAGE_FILTERS });
+  };
+  const resetFilters = () => {
+    clearFilters(); setSort('modified');
     setCategory('all'); setLibraryId(null);
-    setFolder(''); setFolderTrail([]);
+    setFolder(''); setFolderDirectCount(null);
   };
   const manage = (library: Library) => {
     setManagedLibrary(library); setConfirmRemove(false); setLibraryError(null);
@@ -281,7 +291,7 @@ export default function App() {
     setLibraryBusy(true); setLibraryError(null);
     try {
       await api(`/api/libraries/${library.id}`, { method: 'DELETE' });
-      if (libraryId === library.id) setLibraryId(null);
+      if (libraryId === library.id) { setLibraryId(null); setFolder(''); setFolderDirectCount(null); }
       setManagedLibrary(null); setConfirmRemove(false);
       await loadMetadata(); assets.refresh();
       notify(t('app.libraryRemoved'));
@@ -301,7 +311,12 @@ export default function App() {
     }
   };
 
-  const hasFilters = Boolean(search.trim() || format || selectedTag || category === 'favorites' || libraryId !== null);
+  const filterCount = Number(Boolean(search.trim())) + Number(Boolean(format)) + Number(Boolean(selectedTag)) + Number(favoriteOnly) + excludedKeywords.length
+    + Number(Boolean(imageFilters.orientation)) + Number(Boolean(imageFilters.aspect_ratio))
+    + Number(Boolean(imageFilters.min_width || imageFilters.max_width))
+    + Number(Boolean(imageFilters.min_height || imageFilters.max_height))
+    + Number(Boolean(imageFilters.min_size_mb || imageFilters.max_size_mb));
+  const hasFilters = filterCount > 0 || category === 'favorites';
   const progressLibrary = activeLibrary?.scan.state === 'scanning' ? activeLibrary : libraries.find(item => item.scan.state === 'scanning');
   const scanErrors = libraries.filter(item => item.scan.state === 'error');
 
@@ -347,9 +362,20 @@ export default function App() {
     } finally { setBatchBusy(false); }
   };
   const navigateFolder = (targetIndex: number) => {
-    const nextTrail = folderTrail.slice(0, targetIndex + 1);
-    setFolderTrail(nextTrail); setFolder(nextTrail.at(-1)?.path ?? '');
+    setFolder(folderTrail[targetIndex]?.path ?? ''); setFolderDirectCount(null);
   };
+  const selectFolder = (nextLibrary: number, nextFolder: string, separator: string) => {
+    setCategory('all'); setLibraryId(nextLibrary); setFolder(nextFolder);
+    setFolderSeparator(separator); setFolderDirectCount(null); setSidebarOpen(false);
+  };
+  const selectedFolderInfo = useCallback((directCount: number, separator: string) => {
+    setFolderDirectCount(directCount); setFolderSeparator(separator);
+  }, []);
+  const missingFolder = useCallback(() => { setFolder(''); setFolderDirectCount(null); }, []);
+  const clearImageFilter = (...keys: (keyof ImageFilters)[]) => setImageFilters(previous => {
+    const next = { ...previous }; keys.forEach(key => { next[key] = ''; }); return next;
+  });
+  const rangeLabel = (minimum: string, maximum: string, unit: string) => `${minimum || '0'}–${maximum || '∞'} ${unit}`;
 
   return <div className="app-shell">
     {sidebarOpen && <button className="sidebar-backdrop" aria-label={t('app.closeNavigation')} onClick={() => setSidebarOpen(false)} />}
@@ -361,7 +387,7 @@ export default function App() {
           <button className={`navigation-item ${category === 'favorites' ? 'active' : ''}`} aria-current={category === 'favorites' ? 'page' : undefined} onClick={() => setScope('favorites', null)}><Star size={18} /><span>{t('app.favorites')}</span><span className="nav-count">{number(stats.total_favorites)}</span></button>
         </nav>
         <section className="sidebar-section"><div className="sidebar-section-heading"><h2>{t('app.libraries')}</h2><button className="icon-button compact" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /></button></div>
-          <div className="library-list">{libraries.map(library => <div className={`library-navigation ${libraryId === library.id ? 'active' : ''}`} key={library.id}><button className="library-select" aria-current={libraryId === library.id ? 'page' : undefined} onClick={() => setScope('all', library.id)} title={library.path}>{library.scan.state === 'scanning' ? <LoaderCircle size={17} className="spin" /> : library.scan.state === 'error' ? <AlertCircle size={17} className="warning-icon" /> : <Folder size={17} />}<span>{library.name}</span><span className="nav-count">{number(library.asset_count)}</span></button><button className="library-menu" onClick={() => manage(library)} aria-label={t('app.manageLibrary', { name: library.name })}><MoreHorizontal size={16} /></button></div>)}</div>
+          <div className="library-list">{libraries.map(library => <LibraryTree key={library.id} library={library} active={libraryId === library.id} selectedFolder={libraryId === library.id ? folder : ''} revision={foldersRevision} onSelect={selectFolder} onManage={manage} onSelectedInfo={selectedFolderInfo} onMissingFolder={missingFolder} />)}</div>
           {!libraries.length && <p className="sidebar-placeholder">{t('app.noLibraries')}</p>}
           <button className="add-library-link" onClick={() => setShowAdd(true)}><Plus size={15} />{t('app.addLibrary')}</button>
         </section>
@@ -371,17 +397,27 @@ export default function App() {
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><div className="topbar-leading"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label={t('app.openNavigation')}><Menu size={21} /></button><span className="topbar-location"><Images size={18} />{t('app.assetSpace')}</span></div><label className="search-field"><Search size={18} /><input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchAssets')} />{!search && <kbd aria-hidden="true">/</kbd>}{search && <button className="icon-button compact" onClick={() => setSearch('')} aria-label={t('app.clearSearch')}><X size={15} /></button>}</label><div className="topbar-actions"><label className="language-control"><Languages size={15} /><select aria-label={t('app.selectLanguage')} value={i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'zh-CN'} onChange={event => { void i18n.changeLanguage(event.target.value); }}><option value="zh-CN">{t('app.languageChinese')}</option><option value="en">{t('app.languageEnglish')}</option></select><ChevronDown size={11} /></label><button className="button primary top-add" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /><span>{t('app.addLibrary')}</span></button></div></header>
+      <header className="topbar"><div className="topbar-leading"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label={t('app.openNavigation')}><Menu size={21} /></button><span className="topbar-location"><Images size={18} />{t('app.assetSpace')}</span></div><label className="search-field"><Search size={18} /><input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchAssets')} />{!search && <kbd aria-hidden="true">/</kbd>}{search && <button className="icon-button compact" onClick={() => setSearch('')} aria-label={t('app.clearSearch')}><X size={15} /></button>}</label><div className="topbar-actions"><LanguageMenu />{onLogout && <button className="icon-button logout-button" aria-label={t('app.auth.signOut')} title={t('app.auth.signOut')} disabled={logoutBusy} onClick={() => { if (logoutBusy) return; setLogoutBusy(true); void onLogout().catch(cause => notify(errorMessage(cause), true)).finally(() => setLogoutBusy(false)); }}>{logoutBusy ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}</button>}<button className="button primary top-add" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /><span>{t('app.addLibrary')}</span></button></div></header>
       <section className="workspace-heading"><div><h1>{title}<span className="heading-count">{assets.total === null ? '…' : number(assets.total)}</span></h1><p>{activeLibrary ? activeLibrary.path : t(category === 'favorites' ? 'app.favoritesDescription' : 'app.allAssetsDescription')}</p></div><div className="workspace-tools"><button className={`button selection-toggle ${selectionMode ? 'active' : 'secondary'}`} aria-pressed={selectionMode} disabled={batchBusy || (!selectionMode && !assets.total)} onClick={() => { setSelectionMode(value => !value); setSelectedIds(new Set()); setSelected(null); }}><ListChecks size={16} /><span>{t(selectionMode ? 'app.batch.done' : 'app.batch.start')}</span></button></div></section>
-      <div className="toolbar"><div className="toolbar-controls"><label className="select-control format-select"><SlidersHorizontal size={15} /><select value={format} onChange={event => setFormat(event.target.value)} aria-label={t('app.imageFormat')}><option value="">{t('app.allFormats')}</option>{['jpg', 'png', 'gif', 'webp', 'bmp', 'tiff'].map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select><ChevronDown size={12} /></label><label className="select-control sort-select"><select value={sort} onChange={event => setSort(event.target.value)} aria-label={t('app.sortBy')}><option value="modified">{t('app.sortModified')}</option><option value="name">{t('app.sortName')}</option><option value="size">{t('app.sortSize')}</option></select><ChevronDown size={12} /></label><div className="density-controls" role="group" aria-label={t('app.gridDensity')}><button className={density === 280 ? 'active' : ''} onClick={() => setGridDensity(280)} aria-label={t('app.largeGrid')} aria-pressed={density === 280} title={t('app.large')}><Grid2X2 size={17} /></button><button className={density === 220 ? 'active' : ''} onClick={() => setGridDensity(220)} aria-label={t('app.mediumGrid')} aria-pressed={density === 220} title={t('app.medium')}><LayoutGrid size={17} /></button><button className={density === 160 ? 'active' : ''} onClick={() => setGridDensity(160)} aria-label={t('app.compactGrid')} aria-pressed={density === 160} title={t('app.compact')}><Grid3X3 size={17} /></button></div><button className="icon-button refresh-button" onClick={() => { assets.refresh(); void loadMetadata(); void loadFolders(); }} aria-label={t('app.refreshList')} title={t('app.refreshList')}><RefreshCw size={16} /></button></div></div>
+      <div className="toolbar"><div className="toolbar-controls"><button className={`button filter-toggle ${filterCount ? 'active' : 'secondary'}`} onClick={() => setShowFilters(true)} aria-haspopup="dialog"><SlidersHorizontal size={15} />{t('app.filters.title')}{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button><label className="select-control sort-select"><select value={sort} onChange={event => setSort(event.target.value)} aria-label={t('app.sortBy')}>{SORT_OPTIONS.map(value => <option key={value} value={value}>{t(SORT_KEYS[value])}</option>)}</select><ChevronDown size={12} /></label><div className="density-controls" role="group" aria-label={t('app.gridDensity')}><button className={density === 280 ? 'active' : ''} onClick={() => setGridDensity(280)} aria-label={t('app.largeGrid')} aria-pressed={density === 280} title={t('app.large')}><Grid2X2 size={17} /></button><button className={density === 220 ? 'active' : ''} onClick={() => setGridDensity(220)} aria-label={t('app.mediumGrid')} aria-pressed={density === 220} title={t('app.medium')}><LayoutGrid size={17} /></button><button className={density === 160 ? 'active' : ''} onClick={() => setGridDensity(160)} aria-label={t('app.compactGrid')} aria-pressed={density === 160} title={t('app.compact')}><Grid3X3 size={17} /></button></div><button className="icon-button refresh-button" onClick={() => { assets.refresh(); void loadMetadata(); void loadFolders(); }} aria-label={t('app.refreshList')} title={t('app.refreshList')}><RefreshCw size={16} /></button></div></div>
       {activeLibrary && <section className="folder-navigation" aria-label={t('app.folders.navigation')}>
-        <div className="folder-navigation-header"><nav className="folder-breadcrumb" aria-label={t('app.folders.breadcrumb')}><Folder size={14} /><button onClick={() => navigateFolder(-1)} aria-current={!folder ? 'page' : undefined} title={t('app.folders.allInLibrary')}>{activeLibrary.name}</button>{folderTrail.map((item, index) => <span key={item.path}><ChevronRight size={11} /><button onClick={() => navigateFolder(index)} aria-current={index === folderTrail.length - 1 ? 'page' : undefined} title={item.path}>{item.name}</button></span>)}</nav><div className="folder-navigation-actions">{foldersLoading && <LoaderCircle size={13} className="spin" aria-label={t('app.folders.loading')} />}{folder && <button className="folder-up" onClick={() => navigateFolder(folderTrail.length - 2)}><ArrowUp size={13} />{t('app.folders.up')}</button>}</div></div>
-        {foldersError ? <div className="folder-error" role="alert"><span>{foldersError}</span><button onClick={() => void loadFolders()}>{t('app.retry')}</button></div> : folders.length > 0 ? <div className={`folder-chips ${showAllFolders ? 'expanded' : ''}`}>{(showAllFolders ? folders : folders.slice(0, 12)).map(item => <button key={item.path} className="folder-chip" onClick={() => { setFolder(item.path); setFolderTrail(previous => [...previous, item]); }} title={item.path} aria-label={t('app.folders.open', { name: item.path })}><Folder size={13} /><span>{item.name}</span><small title={t('app.assetCount', { count: item.asset_count, formattedCount: number(item.asset_count) })}>{number(item.asset_count)}</small></button>)}</div> : !foldersLoading && <p className="folder-empty-hint">{t(folder ? 'app.folders.noChildren' : 'app.folders.indexedOnly')}</p>}
-        {folders.length > 12 && <button className="folder-show-more" onClick={() => setShowAllFolders(value => !value)}>{t(showAllFolders ? 'app.folders.collapse' : 'app.folders.showAll', { count: folders.length, formattedCount: number(folders.length) })}<ChevronDown size={12} className={showAllFolders ? 'rotate' : ''} /></button>}
-        {foldersTruncated && <p className="folder-empty-hint">{t('app.folders.truncated')}</p>}
+        <div className="folder-navigation-header"><nav className="folder-breadcrumb" aria-label={t('app.folders.breadcrumb')}><Folder size={14} /><button onClick={() => navigateFolder(-1)} aria-current={!folder ? 'page' : undefined} title={t('app.folders.allInLibrary')}>{activeLibrary.name}</button>{folderTrail.map((item, index) => <span key={item.path}><ChevronRight size={11} /><button onClick={() => navigateFolder(index)} aria-current={index === folderTrail.length - 1 ? 'page' : undefined} title={item.path}>{item.name}</button></span>)}</nav>{folder && <button className="folder-up" onClick={() => navigateFolder(folderTrail.length - 2)}><ArrowUp size={13} />{t('app.folders.up')}</button>}</div>
+        <div className="folder-scope"><label className="folder-recursive"><input type="checkbox" checked={folderRecursive} onChange={event => setFolderRecursive(event.target.checked)} />{t('app.folders.includeChildren')}</label>{folderDirectCount !== null && <span>{t('app.folders.directCount', { count: folderDirectCount, formattedCount: number(folderDirectCount) })}</span>}</div>
       </section>}
       {selectionMode && <div className="batch-toolbar" aria-label={t('app.batch.toolbar')}><div className="batch-summary"><span className="batch-selection-count"><Check size={13} />{t('app.batch.selected', { count: selectedIds.size, formattedCount: number(selectedIds.size) })}</span><span className="batch-limit">{t('app.batch.limitShort', { count: MAX_SELECTION })}</span></div><div className="batch-selection-actions"><button onClick={selectVisible} disabled={batchBusy}>{t('app.batch.selectVisible')}</button><button onClick={() => setSelectedIds(new Set())} disabled={batchBusy || !selectedIds.size}>{t('app.batch.clear')}</button></div><div className="batch-actions"><button onClick={() => { void applyBatch({ favorite: true }).catch(cause => notify(errorMessage(cause), true)); }} disabled={batchBusy || !selectedIds.size}><Star size={13} />{t('app.batch.favorite')}</button><button onClick={() => { void applyBatch({ favorite: false }).catch(cause => notify(errorMessage(cause), true)); }} disabled={batchBusy || !selectedIds.size}><Star size={13} />{t('app.batch.unfavorite')}</button><button onClick={() => setShowBatchTags(true)} disabled={batchBusy || !selectedIds.size}><Tag size={13} />{t('app.batch.tags')}</button>{batchBusy && <LoaderCircle size={15} className="spin" aria-label={t('app.batch.applying')} />}</div></div>}
-      {(selectedTag || format || search.trim()) && <div className="active-filters"><span>{t('app.currentFilters')}</span>{selectedTag && <button onClick={() => setSelectedTag('')}><Tag size={12} />{selectedTag}<X size={12} /></button>}{format && <button onClick={() => setFormat('')}>{format.toUpperCase()}<X size={12} /></button>}{search.trim() && <button onClick={() => setSearch('')}>{t('app.searchFilter', { query: search.trim() })}<X size={12} /></button>}<button className="clear-filters" onClick={() => { setSearch(''); setFormat(''); setSelectedTag(''); }}>{t('app.clearFilters')}</button></div>}
+      {filterCount > 0 && <div className="active-filters"><span>{t('app.currentFilters')}</span>
+        {excludedKeywords.map(keyword => <button key={keyword} onClick={() => setExcludedNames(previous => parseExcludedNames(previous).filter(item => item !== keyword).join('\n'))} title={t('app.filters.excludedKeyword', { keyword })} aria-label={t('app.filters.remove', { name: t('app.filters.excludedKeyword', { keyword }) })}><span className="excluded-keyword">{t('app.filters.excludedKeyword', { keyword })}</span><X size={12} /></button>)}
+        {favoriteOnly && <button onClick={() => setFavoriteOnly(false)} aria-label={t('app.filters.remove', { name: t('app.filters.favoriteOnly') })}><Star size={12} />{t('app.filters.favoriteOnly')}<X size={12} /></button>}
+        {selectedTag && <button onClick={() => setSelectedTag('')} aria-label={t('app.filters.remove', { name: selectedTag })}><Tag size={12} />{selectedTag}<X size={12} /></button>}
+        {format && <button onClick={() => setFormat('')} aria-label={t('app.filters.remove', { name: format.toUpperCase() })}>{format.toUpperCase()}<X size={12} /></button>}
+        {search.trim() && <button onClick={() => { setSearch(''); setDebouncedSearch(''); }} aria-label={t('app.clearSearch')}>{t('app.searchFilter', { query: search.trim() })}<X size={12} /></button>}
+        {imageFilters.orientation && <button onClick={() => clearImageFilter('orientation')}>{t(`app.filters.${imageFilters.orientation}`)}<X size={12} /></button>}
+        {imageFilters.aspect_ratio && <button onClick={() => clearImageFilter('aspect_ratio')}>{t('app.filters.aspectRatio')} {imageFilters.aspect_ratio}<X size={12} /></button>}
+        {(imageFilters.min_width || imageFilters.max_width) && <button onClick={() => clearImageFilter('min_width', 'max_width')}>{t('app.filters.width')} {rangeLabel(imageFilters.min_width, imageFilters.max_width, 'px')}<X size={12} /></button>}
+        {(imageFilters.min_height || imageFilters.max_height) && <button onClick={() => clearImageFilter('min_height', 'max_height')}>{t('app.filters.height')} {rangeLabel(imageFilters.min_height, imageFilters.max_height, 'px')}<X size={12} /></button>}
+        {(imageFilters.min_size_mb || imageFilters.max_size_mb) && <button onClick={() => clearImageFilter('min_size_mb', 'max_size_mb')}>{rangeLabel(imageFilters.min_size_mb, imageFilters.max_size_mb, 'MB')}<X size={12} /></button>}
+        <button className="clear-filters" onClick={clearFilters}>{t('app.clearFilters')}</button>
+      </div>}
       {serviceError && <div className="notice error-notice" role="alert"><AlertCircle size={17} /><span>{serviceError}</span><button onClick={() => { void loadMetadata(); assets.refresh(); }}>{t('app.retry')}</button></div>}
       {progressLibrary && <div className="notice scan-notice" role="status"><LoaderCircle size={16} className="spin" /><span>{t('app.scanning')} <strong>{progressLibrary.name}</strong><span className="scan-count">{t('app.scanProcessed', { count: progressLibrary.scan.processed, formattedCount: number(progressLibrary.scan.processed) })}{progressLibrary.scan.total !== null ? ` / ${number(progressLibrary.scan.total)}` : ''}</span></span><span className="scan-availability">{t('app.keepBrowsing')}</span><button className="scan-cancel" disabled={cancelingLibraryId !== null} onClick={() => { void cancelScan(progressLibrary); }}>{t(cancelingLibraryId === progressLibrary.id ? 'app.scanCanceling' : 'app.cancelScan')}</button>{progressLibrary.scan.total !== null && progressLibrary.scan.total > 0 && <div className="scan-progress" style={{ width: `${Math.min(100, progressLibrary.scan.processed / progressLibrary.scan.total * 100)}%` }} />}</div>}
       {!progressLibrary && scanErrors.length > 0 && <div className="notice error-notice"><AlertCircle size={16} /><span>{t('app.scanFailed', { name: scanErrors[0].name })}</span><button onClick={() => manage(scanErrors[0])}>{t('app.viewDetails')}</button></div>}
@@ -389,7 +425,7 @@ export default function App() {
       <div className="asset-scroll" ref={scrollElement}>
         {assets.error && <div className="notice error-notice asset-error" role="alert"><AlertCircle size={17} /><span>{assets.error}</span><button onClick={assets.refresh}>{t('app.reload')}</button></div>}
         {assets.total === null && !assets.error && <div className="loading-state"><LoaderCircle size={26} className="spin" /><span>{t('app.loadingAssets')}</span></div>}
-        {assets.total === 0 && !assets.error && <EmptyState kind={metadataLoaded && libraries.length === 0 ? 'welcome' : hasFilters ? 'filtered' : 'empty'} onAdd={() => setShowAdd(true)} onReset={resetFilters} />}
+        {assets.total === 0 && !assets.error && (activeLibrary && !hasFilters ? <div className="empty-state folder-empty-state"><Folder size={44} strokeWidth={1.3} /><h2>{t('app.folders.emptyTitle')}</h2><p>{t(folderRecursive ? 'app.folders.emptyDescription' : 'app.folders.emptyDirectDescription')}</p>{!folderRecursive && <button className="button secondary" onClick={() => setFolderRecursive(true)}>{t('app.folders.includeChildren')}</button>}<button className="button secondary mobile-folder-browse" onClick={() => setSidebarOpen(true)}>{t('app.folders.browseTree')}</button></div> : <EmptyState kind={metadataLoaded && libraries.length === 0 ? 'welcome' : hasFilters ? 'filtered' : 'empty'} onAdd={() => setShowAdd(true)} onReset={() => { clearFilters(); if (category === 'favorites') setCategory('all'); }} />)}
         {assets.total !== null && assets.total > 0 && <div className="virtual-grid" style={{ height: virtualizer.getTotalSize() }} aria-label={t('app.assetList')}>
           {rows.map(row => <div className="asset-row" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, '--image-height': `${Math.round(cardWidth * 0.75)}px` } as React.CSSProperties}>
             {Array.from({ length: columns }, (_, column) => {
@@ -404,6 +440,7 @@ export default function App() {
       <footer className="workspace-footer"><span>{assets.total === null ? t('app.readingAssets') : t('app.assetCount', { count: assets.total, formattedCount: number(assets.total) })}{selectedTag ? t('app.filteredTag', { tag: selectedTag }) : ''}</span><span className="footer-message"><HardDrive size={12} />{t('app.footerMotto')}</span></footer>
     </main>
 
+    {showFilters && <FilterPanel filters={imageFilters} format={format} tag={selectedTag} sort={sort} favoriteOnly={favoriteOnly} excludedNames={excludedNames} tags={tags.map(item => item.name)} onClose={() => setShowFilters(false)} onApply={(nextFilters, nextFormat, nextTag, nextSort, nextFavoriteOnly, nextExcludedNames) => { setImageFilters(nextFilters); setFormat(nextFormat); setSelectedTag(nextTag); setSort(nextSort); setFavoriteOnly(nextFavoriteOnly); setExcludedNames(nextExcludedNames); }} />}
     {showAdd && <AddLibraryDialog onClose={() => setShowAdd(false)} onAdded={library => { setLibraries(previous => [...previous, library]); setScope('all', library.id); void loadMetadata(); assets.refresh(); notify(t('app.libraryAdded')); }} />}
     {showBatchTags && <BatchTagsDialog count={selectedIds.size} existingTags={tags.map(item => item.name)} onClose={() => { if (!batchBusy) setShowBatchTags(false); }} onApply={async (mode, tags) => { await applyBatch(mode === 'add' ? { add_tags: tags } : { remove_tags: tags }); }} />}
     {selected && <AssetPreview asset={selected.asset} index={selected.index} total={assets.total ?? 0} library={libraries.find(item => item.id === selected.asset.library_id)} onClose={() => setSelected(null)} onNavigate={direction => void navigate(direction)} onUpdated={assetUpdated} />}

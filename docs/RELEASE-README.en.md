@@ -41,6 +41,6 @@ Stop the service before backing up the entire data directory. Back up originals 
 
 Keep one worker for lower-spec computers. Thumbnail processing skips files over 256 MiB, decoded buffers over 128 MiB, or dimensions over 32,768 pixels. These decoder limits are not total process memory limits.
 
-To access from other trusted devices, bind to `0.0.0.0:3210` and set a nonempty `PICSOC_PASSWORD` environment variable; the username is `picsoc`. Use HTTPS for untrusted networks. Authentication is a shared password, with no individual accounts or library permissions. See the repository's security and operations guides.
+To access from other trusted devices, bind to `0.0.0.0:3210` and set a nonempty `PICSOC_PASSWORD` environment variable. Enter that password on the browser login page; sign out when finished. Without a password, the library opens directly. Basic Auth scripts use the username `picsoc`. Use HTTPS for untrusted networks. Authentication is a shared password, with no individual accounts or library permissions. See the repository's security and operations guides.
 
 License: Apache License 2.0, in the included `LICENSE`.

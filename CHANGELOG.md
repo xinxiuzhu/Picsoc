@@ -2,6 +2,16 @@
 
 ## 未发布 / Unreleased
 
+- 新增简洁共享密码登录页和退出登录；会话过期自动返回登录，保留脚本 Basic Auth 兼容。
+- 语言选择改为统一菜单样式，支持键盘；修复非法网格密度缓存和目录刷新丢失已加载页数。
+- 缩略图只缩小、不放大小尺寸素材，避免小图导入产生额外处理和缓存；继续复用已生成的缓存。
+- Add a shared-password login page with expiring browser sessions and logout, and replace the native language select with a styled menu.
+- 新增左侧素材库目录树，扫描并持久化真实层级与空文件夹；支持仅当前目录或包含子目录，旧索引自动迁移。
+- 新增方向、常用/自定义宽高比、像素宽高、文件大小范围和更多排序，可与已有搜索、标签、收藏、格式组合。
+- 支持文件名排除关键词，例如 `map` 隐藏名称中包含该词的素材，可逐词移除并与其他条件组合，原文件保留。
+- 启动时明确显示实际监听地址，并在 IPv4 全地址监听时自动列出网卡 IPv4 访问链接。
+- Add persistent folder trees (including empty directories), direct/recursive browsing, composable orientation/ratio/dimension/size filters, and detected IPv4 access URLs.
+
 - 修复新克隆仓库直接 `cargo run` 时缺少 `frontend/dist` 的编译失败；Cargo 自动构建并嵌入网页，源文件变化自动重建，并保留 Docker/发行的预构建模式。
 - Add automatic frontend builds to Cargo, including fresh-checkout regression checks and explicit prebuilt frontend support for Docker and release jobs.
 

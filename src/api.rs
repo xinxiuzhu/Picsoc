@@ -2,7 +2,6 @@ use std::{
     collections::BTreeSet,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
-    sync::Arc,
 };
 
 use anyhow::Result;
@@ -18,7 +17,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
@@ -28,6 +26,7 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 
 use crate::{
+    auth::{self, Auth, AuthStatus, LoginError},
     db::Db,
     folders, i18n, media,
     models::{AssetBatch, AssetPatch, AssetQuery},
@@ -40,7 +39,7 @@ pub struct AppState {
     pub scanner: Scanner,
     pub data_dir: PathBuf,
     pub bind: SocketAddr,
-    pub password: Option<Arc<str>>,
+    pub auth: Auth,
 }
 
 #[derive(rust_embed::RustEmbed)]
@@ -101,6 +100,9 @@ async fn blocking<T: Send + 'static>(
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/api/auth/status", get(auth_status))
+        .route("/api/auth/login", post(auth_login))
+        .route("/api/auth/logout", post(auth_logout))
         .route("/api/health", get(health))
         .route("/api/stats", get(stats))
         .route("/api/directories", get(directories))
@@ -148,26 +150,9 @@ async fn guard(State(state): State<AppState>, request: Request, next: Next) -> R
                 .localized_response(english);
         }
     }
-    if let Some(password) = &state.password {
-        let authorized = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Basic "))
-            .and_then(|v| base64::engine::general_purpose::STANDARD.decode(v).ok())
-            .is_some_and(|v| constant_time_equal(&v, format!("picsoc:{password}").as_bytes()));
-        if !authorized {
-            let mut response = ApiError(
-                StatusCode::UNAUTHORIZED,
-                "需要用户名 picsoc 和设置的密码".into(),
-            )
+    if !public_request(&request) && !state.auth.authenticated(request.headers()) {
+        return ApiError(StatusCode::UNAUTHORIZED, "请先登录 Picsoc".into())
             .localized_response(english);
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                HeaderValue::from_static("Basic realm=\"Picsoc\", charset=\"UTF-8\""),
-            );
-            return response;
-        }
     }
     let mut response = next.run(request).await;
     // Axum's method/path rejections are plain text by default; keep all API failures in the same shape.
@@ -257,12 +242,88 @@ fn local_host(host: &str, port: u16) -> bool {
         || (port == 80 && ["localhost", "127.0.0.1", "[::1]"].contains(&host))
 }
 
-fn constant_time_equal(a: &[u8], b: &[u8]) -> bool {
-    let mut diff = a.len() ^ b.len();
-    for (i, byte) in b.iter().enumerate() {
-        diff |= usize::from(a.get(i).copied().unwrap_or(0) ^ byte);
+fn public_request(request: &Request) -> bool {
+    if ["/api/auth/status", "/api/auth/login", "/api/auth/logout"].contains(&request.uri().path()) {
+        return true;
     }
-    diff == 0
+    if !matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) {
+        return false;
+    }
+    let path = request.uri().path().trim_start_matches('/');
+    if path == "api" || path.starts_with("api/") {
+        return false;
+    }
+    let candidate = if path.is_empty() { "index.html" } else { path };
+    Frontend::get(candidate).is_some()
+        || (!path.contains('.') && Frontend::get("index.html").is_some())
+}
+
+async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> Json<AuthStatus> {
+    Json(state.auth.status(&headers))
+}
+
+fn secure_origin(headers: &HeaderMap) -> bool {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|origin| origin.strip_prefix("https://"))
+        .is_some_and(|authority| Some(authority.trim_end_matches('/')) == host)
+}
+
+#[derive(Deserialize)]
+struct LoginBody {
+    password: String,
+}
+
+async fn auth_login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<LoginBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(body) = body.map_err(|_| ApiError::bad("登录请求需要填写密码"))?;
+    let token = state
+        .auth
+        .login(&body.password)
+        .map_err(|error| match error {
+            LoginError::InvalidPassword => ApiError(StatusCode::UNAUTHORIZED, "密码错误".into()),
+            LoginError::Unavailable => {
+                ApiError(StatusCode::SERVICE_UNAVAILABLE, "登录服务暂不可用".into())
+            }
+        })?;
+    // Rotate browser sessions after successful login, without changing the previous session on failure.
+    state.auth.logout(&headers);
+    let mut response = Json(AuthStatus {
+        password_required: state.auth.password_required(),
+        authenticated: true,
+    })
+    .into_response();
+    if let Some(token) = token {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&auth::session_cookie(&token, secure_origin(&headers))).unwrap(),
+        );
+    }
+    Ok(response)
+}
+
+async fn auth_logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    state.auth.logout(&headers);
+    let mut response = Json(AuthStatus {
+        password_required: state.auth.password_required(),
+        authenticated: !state.auth.password_required(),
+    })
+    .into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&auth::clear_session_cookie(secure_origin(&headers))).unwrap(),
+    );
+    response
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -542,30 +603,9 @@ async fn assets(
     query: Result<Query<AssetQuery>, QueryRejection>,
 ) -> Result<Json<crate::models::AssetList>, ApiError> {
     let Query(mut query) = query.map_err(|e| ApiError::bad(e.body_text()))?;
+    query.validate().map_err(|e| ApiError::bad(e.to_string()))?;
     if let Some(folder) = query.folder.as_mut() {
-        if query.library_id.is_none() {
-            return Err(ApiError::bad("按子目录筛选时必须指定素材库"));
-        }
         *folder = folders::normalize_folder(folder).map_err(|e| ApiError::bad(e.to_string()))?;
-    }
-    if query.q.as_ref().is_some_and(|q| q.len() > 1024)
-        || query.tag.as_ref().is_some_and(|q| q.len() > 200)
-    {
-        return Err(ApiError::bad("搜索内容过长"));
-    }
-    if query
-        .sort
-        .as_deref()
-        .is_some_and(|s| !["name", "size", "modified"].contains(&s))
-    {
-        return Err(ApiError::bad("排序方式无效"));
-    }
-    if query
-        .format
-        .as_deref()
-        .is_some_and(|s| !["jpg", "png", "gif", "webp", "bmp", "tiff"].contains(&s))
-    {
-        return Err(ApiError::bad("图片格式无效"));
     }
     Ok(Json(blocking(move || state.db.assets(&query)).await?))
 }
@@ -573,6 +613,8 @@ async fn assets(
 #[derive(Deserialize)]
 struct FolderQuery {
     parent: Option<String>,
+    cursor: Option<String>,
+    limit: Option<u32>,
 }
 
 async fn library_folders(
@@ -583,7 +625,26 @@ async fn library_folders(
     let Query(query) = query.map_err(|e| ApiError::bad(e.body_text()))?;
     let parent = folders::normalize_folder(query.parent.as_deref().unwrap_or_default())
         .map_err(|e| ApiError::bad(e.to_string()))?;
-    Ok(Json(blocking(move || state.db.folders(id, &parent)).await?))
+    let limit = query.limit.unwrap_or(1000);
+    if !(1..=1000).contains(&limit) {
+        return Err(ApiError::bad("每页目录数量需要在 1–1000 之间"));
+    }
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(|cursor| folders::normalize_cursor(&parent, cursor))
+        .transpose()
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    Ok(Json(
+        blocking(move || {
+            if cursor.is_none() && limit == 1000 {
+                state.db.folders(id, &parent)
+            } else {
+                state.db.folders_page(id, &parent, cursor.as_deref(), limit)
+            }
+        })
+        .await?,
+    ))
 }
 
 fn normalize_batch(mut batch: AssetBatch) -> Result<AssetBatch, ApiError> {
@@ -899,6 +960,8 @@ async fn frontend(request: Request) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use std::sync::Arc;
     #[test]
     fn range_supports_explicit_open_and_suffix() {
         assert_eq!(parse_range("bytes=0-9", 100), Some((0, 9)));
@@ -915,16 +978,6 @@ mod tests {
             assert_eq!(parse_range(input, 100), None);
         }
     }
-    #[test]
-    fn authentication_checks_full_value() {
-        assert!(constant_time_equal(b"picsoc:password", b"picsoc:password"));
-        assert!(!constant_time_equal(b"picsoc:pass", b"picsoc:password"));
-        assert!(!constant_time_equal(
-            b"picsoc:passwordextra",
-            b"picsoc:password"
-        ));
-    }
-
     #[test]
     fn directory_picker_only_lists_visible_folders() {
         let temp = tempfile::tempdir().unwrap();
@@ -1016,7 +1069,7 @@ mod tests {
             scanner: scanner.clone(),
             data_dir: data,
             bind: "127.0.0.1:3210".parse().unwrap(),
-            password: None,
+            auth: Auth::new(None),
         });
         let mut rejected_paths = Vec::new();
         rejected_paths.extend([package, contents]);
@@ -1107,7 +1160,7 @@ mod tests {
             scanner,
             data_dir: data,
             bind: "127.0.0.1:3210".parse().unwrap(),
-            password: Some(Arc::from("测试密码")),
+            auth: Auth::new(Some(Arc::from("测试密码"))),
         });
         for (host, origin, expected) in [
             ("evil.example:3210", None, StatusCode::FORBIDDEN),
@@ -1153,7 +1206,7 @@ mod tests {
             scanner,
             data_dir: data,
             bind: "127.0.0.1:3210".parse().unwrap(),
-            password: None,
+            auth: Auth::new(None),
         };
         let app = router(state.clone());
         for (language, expected) in [
@@ -1195,7 +1248,7 @@ mod tests {
             assert!(name == "Home" || name == "File system /" || name.starts_with("Drive "));
         }
         let mut state = state;
-        state.password = Some(Arc::from("secret-not-in-response"));
+        state.auth = Auth::new(Some(Arc::from("secret-not-in-response")));
         let request = Request::builder()
             .uri("/api/health")
             .header(header::HOST, "127.0.0.1:3210")
@@ -1204,15 +1257,7 @@ mod tests {
             .unwrap();
         let response = router(state).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert!(
-            response
-                .headers()
-                .get(header::WWW_AUTHENTICATE)
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .contains("Basic")
-        );
+        assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
         assert_eq!(
             response.headers().get(header::CONTENT_LANGUAGE).unwrap(),
             "en"
@@ -1224,10 +1269,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(value["code"], "authentication_required");
-        assert_eq!(
-            value["error"],
-            "Sign in with username picsoc and your configured password."
-        );
+        assert_eq!(value["error"], "Please sign in to Picsoc.");
         assert!(!value.to_string().contains("secret-not-in-response"));
     }
 
@@ -1292,7 +1334,7 @@ mod tests {
             scanner,
             data_dir: data,
             bind: "127.0.0.1:3210".parse().unwrap(),
-            password: None,
+            auth: Auth::new(None),
         });
         for (url, body, code, message) in [
             (
@@ -1368,5 +1410,371 @@ mod tests {
         .unwrap();
         assert_eq!(value["error"], "按子目录筛选时必须指定素材库");
         assert_eq!(value["code"], "folder_library_required");
+    }
+
+    fn auth_fixture(password: Option<&str>) -> (tempfile::TempDir, Router) {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().canonicalize().unwrap();
+        let db = Db::open(&data.join("auth.sqlite")).unwrap();
+        let scanner = Scanner::new(db.clone(), data.clone(), 1);
+        let app = router(AppState {
+            db,
+            scanner,
+            data_dir: data,
+            bind: "127.0.0.1:3210".parse().unwrap(),
+            auth: Auth::new(password.map(Arc::from)),
+        });
+        (temp, app)
+    }
+
+    fn auth_request(method: &str, path: &str, body: Option<&str>, cookie: Option<&str>) -> Request {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "127.0.0.1:3210");
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        if body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        request
+            .body(body.map_or_else(Body::empty, |body| Body::from(body.to_owned())))
+            .unwrap()
+    }
+
+    async fn auth_json(response: Response) -> serde_json::Value {
+        serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16384)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn browser_login_protects_data_rotates_sessions_and_logout_revokes_access() {
+        use tower::ServiceExt;
+        let (_temp, app) = auth_fixture(Some("测试密码"));
+        let response = app
+            .clone()
+            .oneshot(auth_request("GET", "/api/auth/status", None, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            auth_json(response).await,
+            json!({"password_required":true,"authenticated":false})
+        );
+        for path in [
+            "/api/health",
+            "/api/stats",
+            "/api/libraries",
+            "/api/directories",
+            "/api/assets",
+            "/api/tags",
+            "/api/assets/1/original",
+            "/api/assets/1/thumbnail",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(auth_request("GET", path, None, None))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+            assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
+            assert_eq!(auth_json(response).await["code"], "authentication_required");
+        }
+        let root = app
+            .clone()
+            .oneshot(auth_request("GET", "/", None, None))
+            .await
+            .unwrap();
+        assert_eq!(root.status(), StatusCode::OK);
+        assert!(
+            root.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
+        let javascript = Frontend::iter()
+            .find(|name| name.starts_with("assets/") && name.ends_with(".js"))
+            .unwrap();
+        let asset = app
+            .clone()
+            .oneshot(auth_request("GET", &format!("/{javascript}"), None, None))
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK);
+        let wrong = app
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                "/api/auth/login",
+                Some(r#"{"password":"incorrect"}"#),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+        assert!(wrong.headers().get(header::SET_COOKIE).is_none());
+        assert!(wrong.headers().get(header::WWW_AUTHENTICATE).is_none());
+        assert_eq!(auth_json(wrong).await["code"], "invalid_password");
+        for body in ["{", "{}", r#"{"password":123}"#] {
+            let malformed = app
+                .clone()
+                .oneshot(auth_request("POST", "/api/auth/login", Some(body), None))
+                .await
+                .unwrap();
+            assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+            assert!(malformed.headers().get(header::SET_COOKIE).is_none());
+        }
+        let password = json!({"password":"测试密码"}).to_string();
+        let login = app
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                "/api/auth/login",
+                Some(&password),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(login.status(), StatusCode::OK);
+        let set_cookie = login.headers()[header::SET_COOKIE].to_str().unwrap();
+        for flag in ["HttpOnly", "SameSite=Strict", "Path=/", "Max-Age=86400"] {
+            assert!(set_cookie.contains(flag));
+        }
+        let first_cookie = set_cookie.split(';').next().unwrap().to_owned();
+        assert!(!first_cookie.contains("测试密码"));
+        assert_eq!(
+            auth_json(login).await,
+            json!({"password_required":true,"authenticated":true})
+        );
+        let status = app
+            .clone()
+            .oneshot(auth_request(
+                "GET",
+                "/api/auth/status",
+                None,
+                Some(&first_cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(auth_json(status).await["authenticated"], true);
+        assert_eq!(
+            app.clone()
+                .oneshot(auth_request("GET", "/api/stats", None, Some(&first_cookie)))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let login = app
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                "/api/auth/login",
+                Some(&password),
+                Some(&first_cookie),
+            ))
+            .await
+            .unwrap();
+        let second_cookie = login.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert_ne!(first_cookie, second_cookie);
+        assert_eq!(
+            app.clone()
+                .oneshot(auth_request(
+                    "GET",
+                    "/api/health",
+                    None,
+                    Some(&first_cookie)
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(auth_request(
+                    "GET",
+                    "/api/health",
+                    None,
+                    Some(&second_cookie)
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let wrong = app
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                "/api/auth/login",
+                Some(r#"{"password":"wrong"}"#),
+                Some(&second_cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+        assert!(wrong.headers().get(header::SET_COOKIE).is_none());
+        assert_eq!(
+            app.clone()
+                .oneshot(auth_request(
+                    "GET",
+                    "/api/health",
+                    None,
+                    Some(&second_cookie)
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let logout = app
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                "/api/auth/logout",
+                None,
+                Some(&second_cookie),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            logout.headers()[header::SET_COOKIE]
+                .to_str()
+                .unwrap()
+                .contains("Max-Age=0")
+        );
+        assert_eq!(
+            auth_json(logout).await,
+            json!({"password_required":true,"authenticated":false})
+        );
+        assert_eq!(
+            app.oneshot(auth_request(
+                "GET",
+                "/api/health",
+                None,
+                Some(&second_cookie)
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_endpoints_keep_origin_checks_and_without_password_require_no_login() {
+        use tower::ServiceExt;
+        let (_temp, app) = auth_fixture(None);
+        for (method, path, body) in [
+            ("GET", "/api/auth/status", None),
+            ("POST", "/api/auth/login", Some(r#"{"password":""}"#)),
+            ("POST", "/api/auth/logout", None),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(auth_request(method, path, body, None))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                auth_json(response).await,
+                json!({"password_required":false,"authenticated":true})
+            );
+            let mut request = auth_request(method, path, body, None);
+            request
+                .headers_mut()
+                .insert(header::ORIGIN, "http://evil.example".parse().unwrap());
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert!(response.headers().get(header::SET_COOKIE).is_none());
+            assert_eq!(auth_json(response).await["code"], "cross_origin_denied");
+        }
+        assert_eq!(
+            app.oneshot(auth_request("GET", "/api/stats", None, None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn secure_session_cookies_follow_only_same_host_https_origins() {
+        use tower::ServiceExt;
+        let (_temp, app) = auth_fixture(Some("password"));
+        for (origin, secure) in [
+            (None, false),
+            (Some("http://127.0.0.1:3210"), false),
+            (Some("https://127.0.0.1:3210"), true),
+        ] {
+            let mut request = auth_request(
+                "POST",
+                "/api/auth/login",
+                Some(r#"{"password":"password"}"#),
+                None,
+            );
+            // A forwarded header by itself is not evidence that this browser uses HTTPS.
+            request
+                .headers_mut()
+                .insert("x-forwarded-proto", "https".parse().unwrap());
+            if let Some(origin) = origin {
+                request
+                    .headers_mut()
+                    .insert(header::ORIGIN, origin.parse().unwrap());
+            }
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+            assert_eq!(
+                cookie
+                    .split(';')
+                    .any(|attribute| attribute.trim() == "Secure"),
+                secure
+            );
+            let mut logout = auth_request(
+                "POST",
+                "/api/auth/logout",
+                None,
+                Some(cookie.split(';').next().unwrap()),
+            );
+            if let Some(origin) = origin {
+                logout
+                    .headers_mut()
+                    .insert(header::ORIGIN, origin.parse().unwrap());
+            }
+            let response = app.clone().oneshot(logout).await.unwrap();
+            let cleared = response.headers()[header::SET_COOKIE].to_str().unwrap();
+            assert!(cleared.contains("Max-Age=0"));
+            assert_eq!(
+                cleared
+                    .split(';')
+                    .any(|attribute| attribute.trim() == "Secure"),
+                secure
+            );
+        }
+        let mut request = auth_request(
+            "POST",
+            "/api/auth/login",
+            Some(r#"{"password":"password"}"#),
+            None,
+        );
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(response.headers().get(header::SET_COOKIE).is_none());
     }
 }

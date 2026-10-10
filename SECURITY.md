@@ -6,7 +6,9 @@ Picsoc 当前面向个人使用或可信设备间共享，使用一个服务、�
 
 默认原生服务只监听 `127.0.0.1:3210`。Docker 示例仅将端口发布到宿主机回环地址，容器使用非特权用户，原图目录只读挂载。服务会检查请求的 Host 与 Origin；这些检查不能代替身份认证、系统权限和网络访问控制。
 
-设置非空 `PICSOC_PASSWORD` 后，所有路由使用 HTTP Basic Auth，用户名为 `picsoc`。密码为空时禁用认证。HTTP 没有传输加密；通过其他设备或公网使用时应配置 HTTPS，并保持后端端口仅对受控代理或可信网络可达。部署示例见 [运维指南](docs/OPERATIONS.md)。
+设置非空 `PICSOC_PASSWORD` 后，浏览器显示共享密码登录页，数据 API、缩略图和原图需要认证；脚本可继续使用 HTTP Basic Auth，用户名为 `picsoc`。静态前端和认证状态接口允许匿名访问，不包含个人素材数据。密码为空时禁用认证。
+
+浏览器会话采用操作系统安全随机生成的令牌，Cookie 设置 `HttpOnly`、`SameSite=Strict` 和 `Path=/`，经同 Host 的 HTTPS Origin 登录时追加 `Secure`；密码不存入浏览器持久存储。会话有效期为 24 小时，退出会撤销当前令牌，服务重启使全部会话失效；会话存储设有数量上限。HTTP 没有传输加密；通过其他设备或公网使用时应配置 HTTPS，并保持后端端口仅对受控代理或可信网络可达。部署示例见 [运维指南](docs/OPERATIONS.md)。
 
 能够访问并通过认证的用户可以浏览服务机器的目录、添加该进程有权限读取的素材库、查看和下载原图、修改收藏与标签、移除索引。没有每用户的目录白名单；不要将密码分享给不受信任的人。容器只挂载需要索引的素材目录，有助于缩小服务可见的文件范围。
 
@@ -30,7 +32,7 @@ Picsoc 当前面向个人使用或可信设备间共享，使用一个服务、�
 
 ## English
 
-Picsoc is a personal or trusted-network application with an optional shared Basic Auth password (`picsoc` is the username). It has no per-user roles, library isolation, or application-level encryption. Anyone with access can add image directories readable by the service, download originals, and edit library metadata. Use a low-privilege account, mount only the required folders, protect backups and credentials, and use HTTPS for access across devices or untrusted networks.
+Picsoc is a personal or trusted-network application with an optional shared password. Browsers use the login page and an HttpOnly, SameSite=Strict session cookie; scripts can still send Basic Auth (`picsoc` is the username). Sessions expire after 24 hours, are revoked on logout, and are cleared when the service restarts. Static UI and authentication status are public; data and media require authentication when a password is configured. It has no per-user roles, library isolation, or application-level encryption. Authenticated users can add image directories readable by the service, download originals, and edit library metadata. Use a low-privilege account, mount only the required folders, protect backups and credentials, and use HTTPS for access across devices or untrusted networks.
 
 The default native listener and the Docker host port are loopback-only. Host/Origin checks, read-only indexing, symlink exclusions, and decoder limits reduce specific risks; they do not replace authentication, operating-system permissions, or total process memory limits.
 

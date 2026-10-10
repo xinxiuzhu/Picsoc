@@ -19,6 +19,7 @@ Build from source using the instructions below, or download a matching archive f
 - Preview images, navigate with arrow keys, copy relative paths, and download originals.
 - Keep GIF animation in the original preview. TIFF uses a thumbnail preview, with the original available for download.
 - Scan in the background, cancel an active scan, rescan manually, or use periodic incremental scans (every 300 seconds by default).
+- Generate `config.toml` on first startup; stop the service, edit it, and restart to apply settings without runtime environment variables.
 - Use one worker by default and an optional shared password for remote access.
 - Sign in through a simple shared-password page and sign out when finished; without a password, open the library directly.
 - Connect an MCP client to search indexed assets, inspect PNG contact sheets, compose PNG designs with Rust, and save editable layout revisions. Optional OAuth supports ChatGPT through an HTTPS reverse proxy; see the [MCP setup guide](docs/MCP.en.md).
@@ -35,7 +36,7 @@ cargo run --locked --release
 
 The same command works in Windows PowerShell. The first build downloads npm dependencies; source, configuration and lockfile changes trigger a rebuild. Unchanged builds reuse the frontend. The resulting executable needs neither Node.js nor a separate frontend service.
 
-On Debian, install missing tools with `sudo apt update` and `sudo apt install nodejs npm` (omit `sudo` as root), then check `node --version`. Use `-- --no-open` on a headless server.
+On Debian, install missing tools with `sudo apt update` and `sudo apt install nodejs npm` (omit `sudo` as root), then check `node --version`. Set `open_browser = false` in the generated `config.toml` on a headless server.
 
 Docker and release builders can set `PICSOC_FRONTEND_PREBUILT=1` after running `npm --prefix frontend ci` and `npm --prefix frontend run build`. This mode still requires a complete `frontend/dist`; it fails clearly when the Web UI is missing.
 
@@ -45,11 +46,7 @@ Docker and release builders can set `PICSOC_FRONTEND_PREBUILT=1` after running `
 cargo run --locked --release -- --data-dir ./picsoc-data --workers 1
 ```
 
-For access from other devices on a trusted LAN:
-
-```sh
-PICSOC_PASSWORD='replace-with-your-password' cargo run --locked --release -- --bind 0.0.0.0:3210 --no-open
-```
+The first startup generates `config.toml` in the data directory and prints its path. Press `Ctrl+C`, edit the file, and run `cargo run --locked --release` again. For LAN access, set `bind = "0.0.0.0:3210"`, `open_browser = false`, and a nonempty `password`. Existing configuration files are retained; invalid settings stop startup with an error.
 
 The browser shows a simple password login page; sessions last 24 hours and end on logout or service restart. Without a password, the library opens directly. Basic Auth scripts use the username `picsoc`. Startup logs show the actual listening address separately from the local browser URL. When a native service listens on `0.0.0.0`, it lists active IPv4 interfaces and their browser links, placing physical interfaces before virtual bridges and VPNs. Address detection does not need an external service and failures do not stop Picsoc. In Docker, detected addresses belong to the container; use the host IP and published port instead. The `scripts/build.sh` / `scripts/start.sh` helpers are also available, with `.ps1` equivalents on Windows.
 
@@ -98,72 +95,79 @@ The service prints the actual directory at startup. Override it with `--data-dir
 
 ## Docker on Debian
 
-Install Docker Engine and its Compose plugin. Run these commands from the repository root:
+Install Docker Engine and its Compose plugin. In `compose.yaml`, point the image mount's `source` at an existing folder. The default container account is `10001:10001`; edit `user` if a different unprivileged UID/GID is required. Keep the data folder writable and the image folder readable and traversable by that account.
 
 ```sh
 mkdir -p picsoc-data
-cp docs/compose.env.example .env
-id -u
-id -g
-```
-
-Edit `.env` to use an existing image folder and the numeric UID/GID of the unprivileged account that can read it:
-
-```dotenv
-PICSOC_UID=1000
-PICSOC_GID=1000
-PICSOC_DATA_PATH=./picsoc-data
-PICSOC_LIBRARY_PATH=/home/your-name/Pictures
-```
-
-The data folder must be writable and the image folder readable and traversable by that account. The default is `10001:10001`; if you keep it, set the data folder's owner on Linux with `sudo chown 10001:10001 picsoc-data`. Do not apply this to the original image folder or use `0:0`. Compose does not automatically create missing bind-mount folders.
-
-```sh
+sudo chown 10001:10001 picsoc-data
 docker compose up -d --build
+docker compose logs --tail 100 picsoc
+docker compose stop picsoc
 ```
 
-Open [http://127.0.0.1:3210](http://127.0.0.1:3210). Choose **/library** or a subfolder in the folder picker, or enter `/library`. This is the container path; the host's `/home/...` path is not available inside the container.
+Do not change the originals' ownership. If you keep the default image mount `./library`, create that folder before starting; Compose does not create missing mount sources.
 
-Images are mounted read-only at `/library`; metadata and thumbnails persist at `/data`. The container uses an unprivileged UID/GID and a read-only root filesystem. Stop it with `docker compose down`; the host data folder is retained. Logs and restarting:
+Edit the generated host file `picsoc-data/config.toml` (container path `/data/config.toml`) to set the password, workers, scan interval or MCP settings. The image's fixed startup arguments select `/data`, bind to `0.0.0.0:3210` inside the container, and disable browser opening; they override those three file fields. Host port publishing, UID/GID, mounts, resource limits and image selection belong in `compose.yaml`.
 
 ```sh
-docker compose logs --tail 100 picsoc
-docker compose restart
+docker compose start picsoc
 ```
 
-Once a version has been published to GHCR, select its fixed tag in `.env` (`PICSOC_IMAGE=ghcr.io/xinxiuzhu/picsoc:published-version`) and use `docker compose pull`, then `docker compose up -d --no-build`. A package may require the maintainer to make it public before unauthenticated pulls work. A source push does not deploy a server.
+Open [http://127.0.0.1:3210](http://127.0.0.1:3210). Choose **/library** or a subfolder in the picker; the host path is not available inside the container. Originals are read-only. Configuration, metadata, thumbnails and designs persist at `/data`. Later TOML edits take effect after `docker compose restart picsoc`, or stop/edit/start. `docker compose down` removes the container while retaining host data.
+
+For a published GHCR version, edit `image` in `compose.yaml` to its fixed tag, such as `ghcr.io/xinxiuzhu/picsoc:published-version`, then use `docker compose pull` and `docker compose up -d --no-build`. The package must be public or accessible to your GitHub credentials. A source push does not deploy a server.
 
 ## Resources and limits
 
-Docker defaults to one CPU, 512 MiB of memory, and one image worker:
+Docker defaults to one CPU and 512 MiB of memory; edit `cpus` and `mem_limit` in `compose.yaml`. Edit application settings in `config.toml`:
 
-```dotenv
-PICSOC_WORKERS=1
-PICSOC_MEMORY_LIMIT=512m
-PICSOC_CPU_LIMIT=1.0
-PICSOC_SCAN_INTERVAL=300
+```toml
+workers = 1
+scan_interval = 300
 ```
 
 These settings are not a guarantee that every collection fits in 512 MiB. Files over 256 MiB, decoded image buffers over 128 MiB, or dimensions over 32,768 pixels are skipped for thumbnails, while the original remains accessible. Decoder budgets do not bound total process memory; additional workers increase peak usage. Keep one worker on lower-spec machines and inspect logs before raising concurrency.
 
-For slow or network storage, increase the scan interval. `PICSOC_SCAN_INTERVAL=0` disables periodic scans; startup and manual scans still run. The first version uses periodic incremental scans, rather than immediate file-system monitoring. Manual rescanning retries previously failed thumbnails.
+For slow or network storage, increase `scan_interval`; `0` disables periodic scans while startup and manual scans still run. The first version uses periodic incremental scans. Manual rescanning retries previously failed thumbnails.
 
-See [performance and the reproducible benchmark](docs/PERFORMANCE.md). Its recorded result uses synthetic solid-color PNGs; it does not predict import speed for real photo collections or other machines.
+See [performance and the reproducible benchmark](docs/PERFORMANCE.md). Its synthetic solid-color PNG result does not predict real collection import speed.
 
-## Configuration and network access
+## TOML configuration and network access
 
-| CLI option | Environment variable | Default |
-| --- | --- | --- |
-| `--bind` | `PICSOC_BIND` | `127.0.0.1:3210` |
-| `--data-dir` | `PICSOC_DATA_DIR` | User data directory above |
-| `--workers` | `PICSOC_WORKERS` | `1`, allowed range `1–4` |
-| `--scan-interval` | `PICSOC_SCAN_INTERVAL` | `300` seconds; `0` disables periodic scans |
-| `--no-open` | — | Disable automatic browser opening |
-| `--version` | — | Print version and exit |
+The default file is `config.toml` in the data directory listed above. On Debian as root, this is `/root/.local/share/picsoc/config.toml`. Keep the generated `data_dir` value when editing other settings:
 
-For trusted LAN access, set the native bind address to `0.0.0.0:3210`, or set Docker's `PICSOC_HOST_BIND=0.0.0.0`. Configure a nonempty `PICSOC_PASSWORD` and enter it on the login page; Basic Auth scripts use `picsoc` as the username. Use the server's LAN address in the browser.
+```toml
+bind = "0.0.0.0:3210"
+data_dir = "/root/.local/share/picsoc"
+open_browser = false
+workers = 1
+scan_interval = 300
+password = "replace-with-your-password"
 
-Basic Auth over plain HTTP has no transport encryption. Use an HTTPS reverse proxy for access over untrusted networks, with the backend port restricted. There are no independent user accounts or per-library access controls. See [security](SECURITY.md) and the [operations guide](docs/OPERATIONS.md) before sharing access.
+[mcp]
+enabled = false
+public_url = ""
+token = ""
+redirect_uris = []
+```
+
+Stop with `Ctrl+C`, edit, then run the same command again. Existing files are never overwritten. Syntax errors, unknown fields or invalid values stop startup instead of falling back to defaults. Unix creates the file with mode `0600`; it holds the password and any static MCP token in plaintext. Preserve restrictive access. Move previous runtime environment values into TOML manually: Picsoc no longer reads `PICSOC_*` runtime configuration. The separate frontend build flag documented above remains a build-time setting.
+
+| CLI option | Purpose |
+| --- | --- |
+| `--config PATH` | Select the configuration file; generate it if absent |
+| `--data-dir PATH` | Select data storage and the configuration location when `--config` is omitted |
+| `--bind ADDRESS` | Explicitly override the listener |
+| `--workers COUNT` | Explicitly override workers, range `1–4` |
+| `--scan-interval SECONDS` | Explicitly override periodic scans; `0` disables them |
+| `--no-open` | Explicitly disable automatic browser opening |
+| `--version` / `--help` | Print version or help and exit |
+
+Explicit CLI settings override file values. They are recorded when generating a new file but do not rewrite an existing file. Editing `data_dir` selects another storage location; it does not migrate existing data. See the [MCP guide](docs/MCP.en.md) for `[mcp]` settings.
+
+For trusted LAN access, use `bind = "0.0.0.0:3210"` and a nonempty `password`. Docker additionally needs the published port changed to `"0.0.0.0:3210:3210"` in Compose. Enter the password on the login page; Basic Auth scripts use `picsoc` as the username. Use the server's LAN IP in the browser.
+
+Basic Auth over plain HTTP has no transport encryption. Use an HTTPS reverse proxy for untrusted networks with the backend port restricted. There are no independent user accounts or per-library access controls. See [security](SECURITY.md) and the [operations guide](docs/OPERATIONS.md).
 
 ## Backup and maintenance
 

@@ -1,31 +1,21 @@
 services:
   picsoc:
-    image: ${PICSOC_IMAGE:-picsoc:local}
+    image: picsoc:local
     build:
       context: .
       target: runtime
-    user: "${PICSOC_UID:-10001}:${PICSOC_GID:-10001}"
+    user: "10001:10001"
     ports:
-      - "${PICSOC_HOST_BIND:-127.0.0.1}:${PICSOC_PORT:-3210}:3210"
-    environment:
-      PICSOC_BIND: "0.0.0.0:3210"
-      PICSOC_DATA_DIR: /data
-      PICSOC_WORKERS: "${PICSOC_WORKERS:-1}"
-      PICSOC_SCAN_INTERVAL: "${PICSOC_SCAN_INTERVAL:-300}"
-      PICSOC_PASSWORD: "${PICSOC_PASSWORD:-}"
-      PICSOC_MCP_ENABLED: "${PICSOC_MCP_ENABLED:-false}"
-      PICSOC_PUBLIC_URL: "${PICSOC_PUBLIC_URL:-}"
-      PICSOC_MCP_TOKEN: "${PICSOC_MCP_TOKEN:-}"
-      PICSOC_MCP_REDIRECT_URIS: "${PICSOC_MCP_REDIRECT_URIS:-}"
-    command: ["--no-open"]
+      - "127.0.0.1:3210:3210"
+    command: ["--data-dir", "/data", "--bind", "0.0.0.0:3210", "--no-open"]
     volumes:
       - type: bind
-        source: ${PICSOC_DATA_PATH:-./picsoc-data}
+        source: ./picsoc-data
         target: /data
         bind:
           create_host_path: false
       - type: bind
-        source: ${PICSOC_LIBRARY_PATH:-./library}
+        source: ./library
         target: /library
         read_only: true
         bind:
@@ -38,8 +28,8 @@ services:
     init: true
     restart: unless-stopped
     stop_grace_period: 30s
-    mem_limit: ${PICSOC_MEMORY_LIMIT:-512m}
-    cpus: ${PICSOC_CPU_LIMIT:-1.0}
+    mem_limit: 512m
+    cpus: 1.0
     pids_limit: 128
     logging:
       driver: json-file

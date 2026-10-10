@@ -29,6 +29,7 @@ rustc-ice-*.txt
 /data/
 /.cache/
 /.env
+config.toml
 /.DS_Store
 /picsoc-data/
 __pycache__/

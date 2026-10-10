@@ -16,7 +16,7 @@ macOS / Debian: open a terminal in the extracted directory:
 ./picsoc
 ```
 
-Open http://127.0.0.1:3210 if the browser does not open automatically. Keep the service running; `Ctrl+C` stops it. Closing the browser leaves the service available. Choose a language in the page header, add a folder on the machine running Picsoc, and wait for background scanning.
+The first startup generates `config.toml` in the data directory and prints its path. Press `Ctrl+C`, edit it, and start again. Existing files are retained; invalid configuration prevents startup. Open http://127.0.0.1:3210 if the browser does not open automatically. Keep the service running; `Ctrl+C` stops it. Closing the browser leaves the service available. Choose a language in the page header, add a folder on the machine running Picsoc, and wait for background scanning.
 
 Linux uses Debian 12 as its build baseline. Other systems need target-machine verification. Intel and Apple Silicon Macs use separate packages. macOS packages are currently unsigned and not notarized.
 
@@ -32,6 +32,7 @@ Stop the service before backing up the entire data directory. Back up originals 
 
 ## Options and remote access
 
+- `--config PATH`: select a TOML file; generate it if absent.
 - `--bind 127.0.0.1:3210`: listen locally by default.
 - `--data-dir PATH`: choose a persistent data folder.
 - `--workers 1`: one image worker by default; range 1–4.
@@ -41,6 +42,6 @@ Stop the service before backing up the entire data directory. Back up originals 
 
 Keep one worker for lower-spec computers. Thumbnail processing skips files over 256 MiB, decoded buffers over 128 MiB, or dimensions over 32,768 pixels. These decoder limits are not total process memory limits.
 
-To access from other trusted devices, bind to `0.0.0.0:3210` and set a nonempty `PICSOC_PASSWORD` environment variable. Enter that password on the browser login page; sign out when finished. Without a password, the library opens directly. Basic Auth scripts use the username `picsoc`. Use HTTPS for untrusted networks. Authentication is a shared password, with no individual accounts or library permissions. See the repository's security and operations guides.
+Edit settings in `config.toml`; explicit CLI options override them without rewriting an existing file. Runtime environment variables are no longer read. For trusted LAN access, set `bind = "0.0.0.0:3210"`, `open_browser = false` and a nonempty `password`, then restart. The configuration holds credentials in plaintext; new Unix files use mode `0600`. Protect the file and its backups. Enter that password on the browser login page; sign out when finished. Without a password, the library opens directly. Basic Auth scripts use the username `picsoc`. Use HTTPS for untrusted networks. Authentication is a shared password, with no individual accounts or library permissions. See the repository's security and operations guides.
 
 License: Apache License 2.0, in the included `LICENSE`.

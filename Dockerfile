@@ -29,12 +29,8 @@ RUN apt-get update \
     && chown picsoc:picsoc /data
 COPY --from=backend /build/target/release/picsoc /usr/local/bin/picsoc
 COPY LICENSE README.md README.en.md /usr/share/doc/picsoc/
-ENV PICSOC_BIND=0.0.0.0:3210 \
-    PICSOC_DATA_DIR=/data \
-    PICSOC_WORKERS=1 \
-    PICSOC_SCAN_INTERVAL=300
 USER 10001:10001
 WORKDIR /data
 EXPOSE 3210
 ENTRYPOINT ["/usr/local/bin/picsoc"]
-CMD ["--no-open"]
+CMD ["--data-dir", "/data", "--bind", "0.0.0.0:3210", "--no-open"]

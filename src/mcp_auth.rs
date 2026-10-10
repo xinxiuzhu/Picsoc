@@ -161,29 +161,29 @@ impl McpAuth {
                 || value.len() > 1024
                 || !value.bytes().all(|byte| byte.is_ascii_graphic())
         }) {
-            bail!("PICSOC_MCP_TOKEN must be 32–1024 printable ASCII characters");
+            bail!("config.toml: mcp.token must be 32–1024 printable ASCII characters");
         }
         let base = public_url.map(|value| -> Result<Url> {
-            let mut url = Url::parse(value).context("PICSOC_PUBLIC_URL is not a valid URL")?;
+            let mut url = Url::parse(value).context("config.toml: mcp.public_url is not a valid URL")?;
             let loopback = matches!(url.host_str(),Some("localhost"|"127.0.0.1"|"[::1]"));
             if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
-                bail!("PICSOC_PUBLIC_URL must be an HTTPS origin without credentials, query or path (loopback HTTP is allowed for development)");
+                bail!("config.toml: mcp.public_url must be an HTTPS origin without credentials, query or path (loopback HTTP is allowed for development)");
             }
             url.set_path("");
             Ok(url)
         }).transpose()?;
         if base.is_some() && password.is_none() {
-            bail!("OAuth requires PICSOC_PASSWORD");
+            bail!("config.toml: OAuth requires a nonempty password");
         }
         if base.is_some()
             && password
                 .as_ref()
                 .is_some_and(|value| value.is_empty() || value.len() > 1024)
         {
-            bail!("OAuth requires a nonempty PICSOC_PASSWORD of at most 1024 bytes");
+            bail!("config.toml: OAuth requires a nonempty password of at most 1024 bytes");
         }
         if enabled && token.is_none() && base.is_none() {
-            bail!("Enable MCP with PICSOC_MCP_TOKEN or PICSOC_PUBLIC_URL and PICSOC_PASSWORD");
+            bail!("config.toml: enable MCP with mcp.token, or mcp.public_url and password");
         }
         let mut redirects =
             vec!["https://chatgpt.com/connector_platform_oauth_redirect".to_string()];

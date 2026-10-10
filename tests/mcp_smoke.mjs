@@ -44,8 +44,22 @@ function assertSameScene(actual, expected) {
 }
 async function start(enabled = true) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('PICSOC_')));
-  Object.assign(env, { PICSOC_PASSWORD: password, PICSOC_MCP_ENABLED: String(enabled), PICSOC_PUBLIC_URL: enabled ? base : '', PICSOC_MCP_TOKEN: enabled ? token : '', PICSOC_MCP_REDIRECT_URIS: '' });
-  processHandle = spawn(binary, ['--bind', `127.0.0.1:${port}`, '--data-dir', data, '--no-open', '--scan-interval', '0'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  await writeFile(path.join(data, 'config.toml'), [
+    `bind = ${JSON.stringify(`127.0.0.1:${port}`)}`,
+    `data_dir = ${JSON.stringify(data)}`,
+    'open_browser = false',
+    'workers = 1',
+    'scan_interval = 0',
+    `password = ${JSON.stringify(password)}`,
+    '',
+    '[mcp]',
+    `enabled = ${enabled}`,
+    `public_url = ${JSON.stringify(enabled ? base : '')}`,
+    `token = ${JSON.stringify(enabled ? token : '')}`,
+    'redirect_uris = []',
+    '',
+  ].join('\n'), { mode: 0o600 });
+  processHandle = spawn(binary, ['--data-dir', data], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   processHandle.stdout.on('data', bytes => { logs += bytes; }); processHandle.stderr.on('data', bytes => { logs += bytes; });
   for (let i = 0; i < 150; i++) { if (processHandle.exitCode !== null) throw new Error(`Service stopped: ${logs}`); try { const response = await fetch(`${base}/api/auth/status`); if (response.ok) return; } catch {} await wait(100); }
   throw new Error(`Service did not start: ${logs}`);

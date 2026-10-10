@@ -4,10 +4,11 @@
 
 ## 数据与路径
 
-原图放在你自己的素材目录；Picsoc 数据目录保存以下文件。Docker 示例中原图与数据分别是 `/library` 和 `/data`，对应宿主机 `.env` 中的 `PICSOC_LIBRARY_PATH` 和 `PICSOC_DATA_PATH`。
+原图放在你自己的素材目录；Picsoc 数据目录保存以下文件。Docker 示例中原图与数据分别是 `/library` 和 `/data`，对应 `compose.yaml` 的素材与数据挂载 `source`。应用配置为数据目录中的 `config.toml`，宿主机默认是 `picsoc-data/config.toml`。
 
 | 路径 | 内容与备份用途 |
 | --- | --- |
+| `config.toml` | 监听、数据路径、明文密码和可选 MCP 设置；首次启动生成，修改后重启 |
 | `picsoc.sqlite3` 及可能存在的 `-wal` / `-shm` | 索引、素材编号、收藏和标签；须作为同一份停机数据备份 |
 | `thumbnails/` | 已生成的缩略图缓存；保留可避免重算 |
 | `generated/designs/` | 保存的设计布局及不可变版本 |
@@ -15,7 +16,7 @@
 | `fonts/` | 用户提供的原始字体文件；复现文字样式需要相同字体，系统字体另行安装 |
 | `mcp-oauth.json` | OAuth 客户端与 access/refresh 令牌哈希；保留后未过期连接可继续使用 |
 
-原生默认路径：Windows `%LOCALAPPDATA%\Picsoc`；macOS `~/Library/Application Support/Picsoc`；Linux `$XDG_DATA_HOME/picsoc` 或 `~/.local/share/picsoc`。启动日志会显示实际目录，`--data-dir` 可以覆盖它。
+原生默认路径：Windows `%LOCALAPPDATA%\Picsoc`；macOS `~/Library/Application Support/Picsoc`；Linux `$XDG_DATA_HOME/picsoc` 或 `~/.local/share/picsoc`。启动日志会显示实际目录，`--data-dir` 可选择数据目录并定位默认配置文件，`--config` 可指定独立文件。配置中的 `data_dir` 也能选择存储位置，但改路径不会迁移数据；显式 CLI 值优先。
 
 备份整个数据目录能保留收藏、标签、已有索引、设计布局与成品；不要把 `generated`、`fonts` 或授权文件排除在备份之外。原图需要单独备份；数据库和布局不能恢复已丢失的原图。记录原图的绝对路径或容器挂载位置，恢复时保持相同路径。改名或移动文件当前会被识别为删除旧素材并添加新素材，原来的收藏和标签不会自动迁移，引用旧素材编号的布局也可能无法再次合成。
 
@@ -38,11 +39,11 @@ docker compose stop picsoc
 picsoc_backup_file="$picsoc_backup_dir/data-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
 tar -czf "$picsoc_backup_file" -C "$picsoc_data_dir" .
 tar -tzf "$picsoc_backup_file" > /dev/null
-install -m 600 .env "$picsoc_backup_dir/config.env"
+install -m 600 compose.yaml "$picsoc_backup_dir/compose.yaml"
 docker compose start picsoc
 ```
 
-只在归档成功后重新启动。目录所有者若为 `10001`，备份账号需要对应读取权限；不要为了备份修改原图目录的权限。配置备份含密码，不能公开。保留多个时间点和一份独立设备上的副本，并定期实际恢复到隔离目录验证。
+只在归档成功后重新启动。目录所有者若为 `10001`，备份账号需要对应读取权限；不要为了备份修改原图目录的权限。数据备份中的 `config.toml` 含明文密码与可选静态 MCP token，不能公开；自定义 `--config` 位于数据目录外时，也须单独以受限权限备份。保留多个时间点和一份独立设备上的副本，并定期实际恢复到隔离目录验证。
 
 原生 macOS/Linux：在运行窗口按 `Ctrl+C`，确认服务退出后，使用上述 `tar` 命令备份实际数据目录。Windows 可在停止服务后用 PowerShell 复制：
 
@@ -58,15 +59,15 @@ Copy-Item -LiteralPath $picsocData -Destination $picsocBackup -Recurse
 
 1. 停止服务，保留现有数据目录的副本，避免覆盖唯一可用的数据。
 2. 将可信备份解压或复制到一个新的数据目录，不要与正在使用的数据混合。
-3. 检查目录中有 `picsoc.sqlite3`，按备份内容核对 `thumbnails`、`generated`、`fonts` 和 `mcp-oauth.json`；确认原图目录已恢复，路径及内容正确。
-4. Docker 修改 `PICSOC_DATA_PATH` 指向新目录，确认运行 UID/GID 对数据目录有写权限、对素材目录有读取及遍历权限。原生程序用 `--data-dir 新目录` 启动。
+3. 检查目录中有 `picsoc.sqlite3`，按备份内容核对 `config.toml`、`thumbnails`、`generated`、`fonts` 和 `mcp-oauth.json`；确认原图目录已恢复，路径及内容正确。
+4. Docker 修改 `compose.yaml` 中 `/data` 挂载的 `source` 指向新目录，确认运行 UID/GID 对数据目录有写权限、对素材目录有读取及遍历权限。原生程序用 `--data-dir 新目录` 启动，并检查配置中 `data_dir`、原图路径与当前部署一致。移动独立配置文件时，更新 `--config` 路径。
 5. 启动同版本程序，核对素材库、图片数量、收藏和标签，打开原图与 GIF；如有设计，检查历史布局、PNG 下载和字体，再恢复常规访问。
 
 在素材目录仍为空或指向错误位置时不要启动扫描；一次成功扫描会移除索引中已不存在的文件。容器仍使用同样的 `/library` 挂载路径时，即使宿主目录位置调整，已有索引也可以继续使用。跨系统迁移导致服务内路径变化时，目前没有自动路径迁移工具；可在原系统完成备份，或先让新环境提供相同路径。
 
 设计使用 SQLite 索引中的素材编号与保存时的版本指纹，不保存原图副本。迁移时同时保留数据库、原素材、字体和 generated，尽量保留原图修改时间与内容；不要通过删除库、重新添加来替代索引迁移。若来源在迁移中发生变化，先重扫，再读取旧 scene、确认素材编号并另存新布局版本。不同系统的默认字体可能不同，需稳定样式时使用同一份用户字体文件和 font_id。
 
-继续使用原公开域名时，沿用 `PICSOC_PUBLIC_URL` 与 `mcp-oauth.json`，未过期 OAuth 凭据可继续验证；服务端短期授权码和网页会话仍需重新建立。变更公开域名会改变 `/mcp` 的 resource/issuer，旧 OAuth token 不能用于新地址，应在 ChatGPT 更新连接并重新授权。恢复旧备份会恢复该备份中尚未过期的授权状态；需要撤销全部 OAuth 连接时，停止服务、备份后移走 `mcp-oauth.json`，再启动并重新授权。静态 `PICSOC_MCP_TOKEN` 来自环境配置，需另行更换；只改网页密码不会立即撤销已签发的 OAuth token。
+继续使用原公开域名时，沿用 TOML 的 `mcp.public_url` 与 `mcp-oauth.json`，未过期 OAuth 凭据可继续验证；服务端短期授权码和网页会话仍需重新建立。变更公开域名会改变 `/mcp` 的 resource/issuer，旧 OAuth token 不能用于新地址，应在 ChatGPT 更新连接并重新授权。恢复旧备份会恢复该备份中尚未过期的授权状态；需要撤销全部 OAuth 连接时，停止服务、备份后移走 `mcp-oauth.json`，再启动并重新授权。静态令牌在 TOML 的 `mcp.token` 中，需另行更换；只改网页密码不会立即撤销已签发的 OAuth token。
 
 不要同时用两个 Picsoc 实例写同一数据目录：文件布局与 OAuth 持久状态不支持跨进程协作。备份验证应使用隔离目录，并避免让测试实例扫描缺失的真实素材路径。
 
@@ -74,9 +75,11 @@ Copy-Item -LiteralPath $picsocData -Destination $picsocBackup -Recurse
 
 升级前记录正在运行的 commit、二进制版本或完整镜像 tag/digest，并完成停机备份。先看新版本变更记录和实际 CI 结果。当前没有通用的数据库降级或迁移回滚保证。
 
+旧环境变量部署升级到 TOML 时，先记录密码、公开 URL 与 MCP 设置。首次启动生成文件后停止，将这些值写入 `config.toml` 再启动；旧运行环境变量不会读取。自定义数据目录应继续通过 `--data-dir` 定位，或用 `--config` 选定配置。
+
 原生运行：保留旧二进制，将新二进制放到单独目录，沿用原数据目录启动，检查版本、图片、收藏和标签，以及设计布局、下载和 MCP 授权。源码可使用 `cargo build --locked --release` 自动构建并嵌入前端，或使用 [构建脚本](../scripts/build.sh)。
 
-Docker 运行：选择已经发布的固定版本，在 `.env` 设置 `PICSOC_IMAGE=ghcr.io/xinxiuzhu/picsoc:具体版本`，保持 UID/GID、数据和素材路径一致，然后：
+Docker 运行：选择已经发布的固定版本，将 `compose.yaml` 的 `image` 改为 `ghcr.io/xinxiuzhu/picsoc:具体版本`，保持 UID/GID、数据和素材路径一致，然后：
 
 ```sh
 docker compose pull picsoc
@@ -90,7 +93,7 @@ docker compose logs --tail 100 picsoc
 
 ## HTTPS 反向代理示例
 
-以下使用同一台 Debian 机器上的 Nginx 代理到本仓库的 Docker Compose 服务。Compose 保持 `PICSOC_HOST_BIND=127.0.0.1`；容器内部仍使用 `PICSOC_BIND=0.0.0.0:3210`。在 `.env` 设置非空 `PICSOC_PASSWORD`，登录用户名为 `picsoc`。只开放代理需要的 HTTPS 端口，后端 3210 不公开。
+以下使用同一台 Debian 机器上的 Nginx 代理到本仓库的 Docker Compose 服务。Compose 保持发布端口 `"127.0.0.1:3210:3210"`；容器启动参数监听 `0.0.0.0:3210`。在宿主机 `picsoc-data/config.toml` 设置非空 `password` 并重启，登录用户名为 `picsoc`。只开放代理需要的 HTTPS 端口，后端 3210 不公开。
 
 准备你自己的域名、DNS 和可信 TLS 证书，将示例域名与证书路径换为实际值。Nginx 配置片段放在它的 `http` 配置上下文中；本示例使用域名根路径，不支持把 Picsoc 放到 `/picsoc/` 子路径。
 
@@ -136,7 +139,7 @@ curl --fail --user picsoc https://picsoc.example.com/api/health
 
 原生服务若仍绑定 `127.0.0.1`，会拒绝上述公开域名 Host。此示例因此使用 Compose：宿主机端口仅回环可达，容器内监听地址允许代理保留真实 Host。若改为原生广域绑定，需要额外防火墙仅允许代理连接；不要照抄配置后将后端直接开放。
 
-启用 MCP 时设置 `PICSOC_MCP_ENABLED=true`、`PICSOC_PUBLIC_URL=https://你的域名` 与非空 `PICSOC_PASSWORD`。根代理应原样转发 `/mcp`、`/.well-known/` 与 `/oauth/`，不能只开放 MCP 工具端点；代理请求体上限 1 MiB 覆盖 MCP 布局请求，服务端仍分别限制普通 API 64 KiB、设计保存 256 KiB 和 OAuth 16 KiB。详细步骤见 [ChatGPT MCP 说明](MCP.md)。
+启用 MCP 时在 `config.toml` 设置非空 `password`，并设置 `[mcp]` 的 `enabled = true`、`public_url = "https://你的域名"`，然后重启。根代理应原样转发 `/mcp`、`/.well-known/` 与 `/oauth/`，不能只开放 MCP 工具端点；代理请求体上限 1 MiB 覆盖 MCP 布局请求，服务端仍分别限制普通 API 64 KiB、设计保存 256 KiB 和 OAuth 16 KiB。详细步骤见 [ChatGPT MCP 说明](MCP.md)。
 
 当前示例服务器的 `https://orionai.iepose.cn/api/auth/status` 已确认能到达 Picsoc，网页局域网入口为 `http://192.168.2.101:3210/`。这项检查不表示新 MCP 代码已部署，或 ChatGPT 账户已完成连接；需在服务器更新并重启后检查公开发现接口和 `/mcp` 401，再由使用者完成 OAuth 授权。
 
@@ -144,11 +147,12 @@ curl --fail --user picsoc https://picsoc.example.com/api/health
 
 | 现象 | 首先检查 |
 | --- | --- |
+| 修改配置不生效或启动失败 | 是否编辑日志打印的文件；语法和值是否合法；是否重启；CLI 是否覆盖同名字段 |
 | 网页打不开 | 服务是否运行、端口是否占用、实际绑定地址、容器日志 |
 | 添加目录失败 | 路径是否属于服务机器；Docker 内填写 `/library`；UID/GID 是否能遍历目录 |
 | 图片数量没更新 | 扫描状态与错误、扫描间隔；手动重扫可重试之前失败的缩略图 |
 | 缩略图失败 | 原图权限、格式、文件/像素限制、数据目录剩余空间；TIFF 使用缩略图而非浏览器原图 |
-| 容器反复退出 | 查看退出状态与日志，保持 `PICSOC_WORKERS=1`，检查内存上限和磁盘空间 |
+| 容器反复退出 | 查看退出状态与日志，保持 TOML 的 `workers = 1`，检查内存上限和磁盘空间 |
 | 代理请求 403 | Host 与 Origin 是否相同、原生是否仅回环绑定，不要删除 Origin 绕过检查 |
 | 修改数据时 401 | 浏览器会话是否过期、代理是否保留 Cookie，重新登录；脚本检查密码、用户名和 Authorization |
 | ChatGPT 发现 MCP 时收到 HTML | 是否仍运行旧二进制、MCP 是否明确启用、代理是否原样转发 `/mcp` 和发现路径 |

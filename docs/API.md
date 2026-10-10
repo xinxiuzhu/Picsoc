@@ -1,6 +1,6 @@
 # HTTP API
 
-前端与 API 使用同一地址，默认是 `http://127.0.0.1:3210`。请求和响应使用 UTF-8 JSON；媒体接口返回图片字节。设置 `PICSOC_PASSWORD` 后，浏览器通过登录页获得会话 Cookie，数据 API 与媒体接口需要认证。脚本仍可使用 HTTP Basic Auth，用户名固定为 `picsoc`。静态前端与以下认证接口允许匿名访问，不返回个人素材或路径。
+前端与 API 使用同一地址，默认是 `http://127.0.0.1:3210`。请求和响应使用 UTF-8 JSON；媒体接口返回图片字节。在 `config.toml` 设置非空 `password` 后，浏览器通过登录页获得会话 Cookie，数据 API 与媒体接口需要认证。脚本仍可使用 HTTP Basic Auth，用户名固定为 `picsoc`。静态前端与以下认证接口允许匿名访问，不返回个人素材或路径。
 
 ## 接口
 
@@ -186,7 +186,7 @@
 
 ## MCP 接口
 
-MCP 使用独立路由和鉴权，默认关闭，通过 `--mcp` 或 `PICSOC_MCP_ENABLED=true` 明确启用。`POST /mcp` 接收单个 JSON-RPC 2.0 消息，支持 `initialize`、`ping`、`tools/list`、`tools/call`；通知成功返回无内容的 `202`。请求需声明 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，有认证的 `GET`/`DELETE /mcp` 返回 `405`（本实现不提供 SSE 或 session）。单次 MCP 请求限制为 1 MiB。
+MCP 使用独立路由和鉴权，默认关闭，通过 TOML `[mcp]` 表中的 `enabled = true` 或显式 `--mcp` 启用。`POST /mcp` 接收单个 JSON-RPC 2.0 消息，支持 `initialize`、`ping`、`tools/list`、`tools/call`；通知成功返回无内容的 `202`。请求需声明 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，有认证的 `GET`/`DELETE /mcp` 返回 `405`（本实现不提供 SSE 或 session）。单次 MCP 请求限制为 1 MiB。
 
 当前支持 `2025-03-26`、`2025-06-18`、`2025-11-25`，初始化会协商版本；后续 `MCP-Protocol-Version` 不能指定不支持的版本。不会通过 MCP 暴露任意文件系统、命令执行或 Rust 编译。
 

@@ -10,15 +10,28 @@ Picsoc 在同一个 Rust 进程中提供图库网页、Streamable HTTP MCP 和 P
 
 ```sh
 git pull --ff-only
-export PICSOC_PASSWORD='你的现有 Picsoc 登录密码'
-export PICSOC_PUBLIC_URL='https://orionai.iepose.cn'
-export PICSOC_MCP_ENABLED=true
-cargo run --locked --release -- --bind 0.0.0.0:3210 --no-open
+cargo run --locked --release
 ```
 
-沿用原来的 `--data-dir` 或 `PICSOC_DATA_DIR`，才能继续使用已有图库、收藏与标签。从源码构建需要 Node.js/npm，`cargo run` 会自动编译前端；使用发行程序时，最后一行改为 `./picsoc --bind 0.0.0.0:3210 --no-open`。
+首次运行会生成数据目录中的 `config.toml` 并打印路径。按 `Ctrl+C` 停止，编辑该文件。Debian root 用户的默认路径是 `/root/.local/share/picsoc/config.toml`；使用其他账号或自定义数据目录时以日志路径为准。保留生成的 `data_dir`，将下面字段修改为：
 
-Docker 在 `.env` 中设置同样的三个变量，再执行 `docker compose up -d --build`。素材继续只读挂载，作品保存到 `/data/generated`，授权记录保存到 `/data/mcp-oauth.json`；镜像带有中文与拉丁字体。直接运行的 Debian 如缺少中文字体，可安装：
+```toml
+bind = "0.0.0.0:3210"
+open_browser = false
+password = "你的现有 Picsoc 登录密码"
+
+[mcp]
+enabled = true
+public_url = "https://orionai.iepose.cn"
+token = ""
+redirect_uris = []
+```
+
+然后再次执行 `cargo run --locked --release`。这些字段应修改到已有文件对应位置，不要追加重复键或重复 `[mcp]` 表。已有文件不会覆盖，修改后须重启生效，配置非法则启动失败。原来的运行环境变量不再读取；将原密码与 MCP 配置手动移入 TOML。
+
+沿用原来的 `--data-dir`，才能继续使用已有图库、收藏与标签，默认配置也会在该目录生成。需要自定配置位置可用 `--config /路径/config.toml`。显式 CLI 参数优先文件值，但不会重写已有文件。从源码构建需要 Node.js/npm，`cargo run` 会自动编译前端；使用发行程序时运行 `./picsoc`。
+
+Docker 首次 `docker compose up -d --build` 生成宿主机 `picsoc-data/config.toml`（容器 `/data/config.toml`），先 `docker compose stop picsoc`，按上述内容配置 `password` 与 `[mcp]`，再 `docker compose start picsoc`。更新已有容器仍使用 `docker compose up -d --build`；之后配置修改可通过 `docker compose restart picsoc` 生效。素材继续只读挂载，作品保存到 `/data/generated`，授权记录保存到 `/data/mcp-oauth.json`；镜像带有中文与拉丁字体。直接运行的 Debian 如缺少中文字体，可安装：
 
 ```sh
 sudo apt-get update
@@ -29,7 +42,7 @@ sudo apt-get install --yes fonts-wqy-zenhei fonts-dejavu-core
 
 ## HTTPS 反向代理
 
-`PICSOC_PUBLIC_URL` 是精确的 HTTPS 根地址，不含子路径、查询或账号密码。局域网 HTTP 地址不能直接用于云端 ChatGPT 连接。授权页面也要浏览器可达，不能只代理 `/mcp`。
+`mcp.public_url` 是精确的 HTTPS 根地址，不含子路径、查询或账号密码。局域网 HTTP 地址不能直接用于云端 ChatGPT 连接。授权页面也要浏览器可达，不能只代理 `/mcp`。
 
 现有根代理需保留 Host，转发 `/mcp`、`/.well-known/oauth-protected-resource/mcp`、`/.well-known/oauth-authorization-server` 和 `/oauth/` 下的路径。Nginx HTTPS 虚拟主机示例：
 
@@ -63,7 +76,7 @@ curl --fail https://orionai.iepose.cn/.well-known/oauth-authorization-server
 3. 打开 Picsoc 授权页面，输入现有 Picsoc 密码并确认申请的权限。
 4. 查看发现的工具，在新对话中选中 Picsoc，开始搜索和设计。
 
-默认允许稳定回调 `https://chatgpt.com/connector_platform_oauth_redirect`，发布 issuer 标识并在回调返回 `iss`。如果管理页面显示另一条回调地址，把其**完整精确值**加入 `PICSOC_MCP_REDIRECT_URIS`，逗号分隔并重启；不支持通配回调。[官方鉴权文档](https://developers.openai.com/plugins/build/auth)
+默认允许稳定回调 `https://chatgpt.com/connector_platform_oauth_redirect`，发布 issuer 标识并在回调返回 `iss`。如果管理页面显示另一条回调地址，把其**完整精确值**加入 TOML 的 `mcp.redirect_uris` 字符串数组，例如 `redirect_uris = ["https://chatgpt.com/connector/oauth/完整回调标识"]`，然后重启；不支持通配回调。[官方鉴权文档](https://developers.openai.com/plugins/build/auth)
 
 权限为 `picsoc:read`（搜索、看图、读布局）与 `picsoc:write`（保存、合成）。OAuth 使用 PKCE S256、一次性授权码、绑定 `/mcp` 的 resource、1 小时 access token 和 7 天可轮转 refresh token。客户端与令牌哈希持久保存，正常重启无需重复连接。密码改变后，已授权令牌在到期或撤销前仍有效；需要清除所有连接时，停机备份后移走 `mcp-oauth.json`，再启动并重新授权。不要在同一数据目录同时运行多个实例。
 
@@ -125,12 +138,16 @@ curl --fail https://orionai.iepose.cn/.well-known/oauth-authorization-server
 
 ## 本地 MCP 客户端
 
-支持固定 Bearer 凭据的本地客户端可以使用独立 `PICSOC_MCP_TOKEN`（32–1024 个可打印 ASCII 字符）；它不是网页密码，也不是 OpenAI API key，具有读取与生成作品权限。
+支持固定 Bearer 凭据的本地客户端可以使用 TOML `[mcp]` 中的独立 `token`（32–1024 个可打印 ASCII 字符）；它不是网页密码，也不是 OpenAI API key，具有读取与生成作品权限。
 
-```sh
-export PICSOC_MCP_ENABLED=true
-export PICSOC_MCP_TOKEN='替换为至少32字符的独立随机令牌'
-cargo run --locked -- --no-open
+在生成的 `config.toml` 中修改，然后执行 `cargo run --locked --release`：
+
+```toml
+[mcp]
+enabled = true
+public_url = ""
+token = "replace-with-a-random-token-32-or-more-chars"
+redirect_uris = []
 ```
 
-客户端使用 `http://127.0.0.1:3210/mcp`，请求头 `Authorization: Bearer ...` 和 `Accept: application/json, text/event-stream`。本版支持 MCP 2025-03-26、2025-06-18、2025-11-25 协商，没有 SSE 订阅、server push 或 session ID。生产 ChatGPT 连接使用前述 OAuth + HTTPS。
+将示例 `token` 换成自己的随机 ASCII 令牌。客户端使用 `http://127.0.0.1:3210/mcp`，请求头 `Authorization: Bearer ...` 和 `Accept: application/json, text/event-stream`。本版支持 MCP 2025-03-26、2025-06-18、2025-11-25 协商，没有 SSE 订阅、server push 或 session ID。生产 ChatGPT 连接使用前述 OAuth + HTTPS。

@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod config;
 mod db;
 mod design;
 mod folders;
@@ -21,48 +22,77 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 struct Args {
     #[arg(
         long,
-        env = "PICSOC_BIND",
-        default_value = "127.0.0.1:3210",
-        help = "HTTP 监听地址"
+        help = "TOML 配置文件，默认位于数据目录 config.toml；不存在时自动生成"
     )]
-    bind: SocketAddr,
+    config: Option<PathBuf>,
+    #[arg(long, help = "临时覆盖配置中的 HTTP 监听地址")]
+    bind: Option<SocketAddr>,
     #[arg(
         long,
-        env = "PICSOC_DATA_DIR",
-        help = "数据库和缩略图目录，默认使用当前用户应用数据目录"
+        help = "数据目录及默认配置文件位置，默认使用当前用户应用数据目录"
     )]
     data_dir: Option<PathBuf>,
     #[arg(long, help = "启动后不自动打开浏览器")]
     no_open: bool,
-    #[arg(long,env="PICSOC_WORKERS",default_value_t=1,value_parser=clap::value_parser!(u8).range(1..=4),help="图片解码并发数（1–4）")]
-    workers: u8,
+    #[arg(long,value_parser=clap::value_parser!(u8).range(1..=4),help="临时覆盖图片解码并发数（1–4）")]
+    workers: Option<u8>,
+    #[arg(long, help = "临时覆盖增量扫描间隔（秒），0 为关闭周期扫描")]
+    scan_interval: Option<u64>,
     #[arg(
         long,
-        env = "PICSOC_SCAN_INTERVAL",
-        default_value_t = 300,
-        help = "增量扫描间隔（秒），0 为关闭周期扫描"
+        num_args = 0..=1,
+        default_missing_value = "true",
+        help = "临时覆盖 MCP 开关（--mcp 或 --mcp=false）"
     )]
-    scan_interval: u64,
-    #[arg(
-        long,
-        env = "PICSOC_MCP_ENABLED",
-        default_value_t = false,
-        help = "启用 MCP 素材与设计接口（需配置独立授权）"
-    )]
-    mcp: bool,
-    #[arg(
-        long,
-        env = "PICSOC_PUBLIC_URL",
-        help = "反向代理的 HTTPS 根地址，用于 MCP OAuth 发现"
-    )]
+    mcp: Option<bool>,
+    #[arg(long, help = "临时覆盖 MCP OAuth 的 HTTPS 根地址")]
     public_url: Option<String>,
     #[arg(
         long,
-        env = "PICSOC_MCP_REDIRECT_URIS",
         value_delimiter = ',',
         help = "额外允许的 OAuth 完整回调地址（逗号分隔）"
     )]
     mcp_redirect_uris: Vec<String>,
+}
+
+impl Args {
+    fn apply(&self, settings: &mut config::AppConfig) {
+        if let Some(bind) = self.bind {
+            settings.bind = bind;
+        }
+        if let Some(data_dir) = &self.data_dir {
+            settings.data_dir.clone_from(data_dir);
+        }
+        if self.no_open {
+            settings.open_browser = false;
+        }
+        if let Some(workers) = self.workers {
+            settings.workers = workers;
+        }
+        if let Some(scan_interval) = self.scan_interval {
+            settings.scan_interval = scan_interval;
+        }
+        if let Some(enabled) = self.mcp {
+            settings.mcp.enabled = enabled;
+        }
+        if let Some(public_url) = &self.public_url {
+            settings.mcp.public_url.clone_from(public_url);
+        }
+        if !self.mcp_redirect_uris.is_empty() {
+            settings
+                .mcp
+                .redirect_uris
+                .clone_from(&self.mcp_redirect_uris);
+        }
+    }
+}
+
+fn absolute_path(path: PathBuf) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 fn default_data_dir() -> Result<PathBuf> {
@@ -101,35 +131,51 @@ async fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
-    let public_url = args.public_url.filter(|value| !value.trim().is_empty());
-    let mcp_redirect_uris: Vec<_> = args
-        .mcp_redirect_uris
-        .into_iter()
+    let initial_data_dir = absolute_path(args.data_dir.clone().map_or_else(default_data_dir, Ok)?)?;
+    let config_path = absolute_path(
+        args.config
+            .clone()
+            .unwrap_or_else(|| initial_data_dir.join("config.toml")),
+    )?;
+    let mut initial = config::AppConfig::defaults(initial_data_dir);
+    args.apply(&mut initial);
+    let loaded = config::load_or_create(&config_path, &initial)?;
+    println!("配置文件：{}", config_path.display());
+    if loaded.created {
+        println!("已生成 config.toml；按 Ctrl+C 停止服务，编辑配置后重新启动即可生效。");
+    }
+    let mut settings = loaded.config;
+    args.apply(&mut settings);
+    let public_url = Some(settings.mcp.public_url.clone()).filter(|value| !value.trim().is_empty());
+    let mcp_redirect_uris: Vec<_> = settings
+        .mcp
+        .redirect_uris
+        .iter()
         .filter(|value| !value.trim().is_empty())
+        .cloned()
         .collect();
-    let data_dir = args.data_dir.map_or_else(default_data_dir, Ok)?;
+    let data_dir = settings.data_dir;
     std::fs::create_dir_all(&data_dir).context("无法创建数据目录")?;
     let data_dir = data_dir.canonicalize()?;
     let database = db::Db::open(&data_dir.join("picsoc.sqlite3"))?;
-    let scanner = scanner::Scanner::new(database.clone(), data_dir.clone(), args.workers.into());
+    let scanner =
+        scanner::Scanner::new(database.clone(), data_dir.clone(), settings.workers.into());
     let designs = design::DesignService::new(database.clone(), data_dir.clone())?;
-    let password = std::env::var("PICSOC_PASSWORD")
-        .ok()
+    let password = Some(settings.password)
         .filter(|p| !p.is_empty())
         .map(Arc::<str>::from);
-    let mcp_token = std::env::var("PICSOC_MCP_TOKEN")
-        .ok()
+    let mcp_token = Some(settings.mcp.token)
         .filter(|value| !value.is_empty())
         .map(Arc::<str>::from);
     let mcp_auth = Arc::new(mcp_auth::McpAuth::new(
-        args.mcp,
+        settings.mcp.enabled,
         password.clone(),
         mcp_token,
         public_url.as_deref(),
         &mcp_redirect_uris,
         data_dir.join("mcp-oauth.json"),
     )?);
-    let listener = tokio::net::TcpListener::bind(args.bind)
+    let listener = tokio::net::TcpListener::bind(settings.bind)
         .await
         .context("监听端口失败，可能已有 Picsoc 实例在运行")?;
     let bind = listener.local_addr()?;
@@ -171,14 +217,14 @@ async fn main() -> Result<()> {
         );
     } else if bind.ip().is_loopback() {
         println!(
-            "其他设备访问：添加 --bind 0.0.0.0:{} --no-open",
+            "其他设备访问：在 config.toml 设置 bind = \"0.0.0.0:{}\"、open_browser = false",
             bind.port()
         );
     } else {
         println!("网络访问：{url}");
     }
     println!("按 Ctrl+C 退出");
-    if !args.no_open {
+    if settings.open_browser {
         let browser_url = url.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = webbrowser::open(&browser_url) {
@@ -196,10 +242,10 @@ async fn main() -> Result<()> {
                     background_scanner.start(library.id);
                 }
             }
-            if args.scan_interval == 0 {
+            if settings.scan_interval == 0 {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(args.scan_interval)).await;
+            tokio::time::sleep(Duration::from_secs(settings.scan_interval)).await;
         }
     });
     if mcp_auth.enabled() {

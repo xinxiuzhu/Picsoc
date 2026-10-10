@@ -4,7 +4,7 @@
 
 ## 运行结构
 
-Picsoc 是一个 Rust 服务进程：Axum 同时提供 HTTP API、原图和嵌入的网页；React 前端由 Vite 构建为 `frontend/dist`，再通过 `rust-embed` 编入程序。Cargo 的 `build.rs` 在网页缺失或输入变化时自动调用 npm 构建，未变化时复用结果；Docker/发行构建用 `PICSOC_FRONTEND_PREBUILT=1` 使用已构建网页。正式运行不需要 Node.js 或第二个前端端口。启动入口及 CLI 配置在 [main.rs](../src/main.rs)，路由和中间件在 [api.rs](../src/api.rs)。
+Picsoc 是一个 Rust 服务进程：Axum 同时提供 HTTP API、原图和嵌入的网页；React 前端由 Vite 构建为 `frontend/dist`，再通过 `rust-embed` 编入程序。Cargo 的 `build.rs` 在网页缺失或输入变化时自动调用 npm 构建，未变化时复用结果；Docker/发行构建用 `PICSOC_FRONTEND_PREBUILT=1` 使用已构建网页。正式运行不需要 Node.js 或第二个前端端口。启动入口在 [main.rs](../src/main.rs)，TOML 加载与 CLI 覆盖在 [config.rs](../src/config.rs)，路由和中间件在 [api.rs](../src/api.rs)。
 
 ```mermaid
 flowchart LR
@@ -27,6 +27,8 @@ flowchart LR
     Render --> Generated[generated 布局与成品]
     Design --> Fonts[启动时加载的字体]
 ```
+
+首次启动在数据目录生成 `config.toml`，`--config` 可指定其他文件，`--data-dir` 可定位默认文件与数据目录。已有文件只读加载，显式 CLI 设置优先，首次生成会记录 CLI 值；配置语法、未知字段或值非法时直接拒绝启动。应用不读取 `PICSOC_*` 运行环境变量，构建期的前端标记独立保留。新配置在 Unix 使用 `0600` 权限，密码与静态 MCP token 在配置中为明文。修改文件后须重启。
 
 HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监听地址、本机网页及网络访问地址；IPv4 全地址绑定使用 [network.rs](../src/network.rs) 枚举活跃网卡，不访问外部服务。默认数据目录位于当前用户的应用数据目录；数据库为 `picsoc.sqlite3`，缩略图位于 `thumbnails`。素材库保留原有目录结构，索引、收藏、标签和缓存写入数据目录，原图只读访问。
 
@@ -77,7 +79,7 @@ HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监�
 
 原图只通过索引 ID 获取文件路径，不接受任意文件路径参数。`secure_path` 拒绝绝对路径、`..` 等非普通相对组件，检查素材根目录仍对应原规范路径，并规范化目标路径、确认其位于库内且为文件。读取采用 `ReaderStream` 和 64 KiB 块，支持单段 Range、ETag 和条件请求，不把整个原图载入内存，见 [api.rs](../src/api.rs)。
 
-网页与 REST API 路由经过统一中间件，检查请求的 Origin；回环绑定还限制 Host 为 localhost 或回环地址。设置 `PICSOC_PASSWORD` 后，静态前端和认证接口允许匿名访问，数据 API 和媒体通过会话 Cookie 或兼容的 Basic Auth 认证。中英文错误按每个请求的 `Accept-Language` 处理，保留兼容的 `error` 并提供稳定 `code`，见 [i18n.rs](../src/i18n.rs)。MCP 与 OAuth 使用单独的路由和授权，网页 Cookie/Basic 不会绕过 MCP 的 Bearer 验证。
+网页与 REST API 路由经过统一中间件，检查请求的 Origin；回环绑定还限制 Host 为 localhost 或回环地址。在 `config.toml` 设置非空 `password` 后，静态前端和认证接口允许匿名访问，数据 API 和媒体通过会话 Cookie 或兼容的 Basic Auth 认证。中英文错误按每个请求的 `Accept-Language` 处理，保留兼容的 `error` 并提供稳定 `code`，见 [i18n.rs](../src/i18n.rs)。MCP 与 OAuth 使用单独的路由和授权，网页 Cookie/Basic 不会绕过 MCP 的 Bearer 验证。
 
 [auth.rs](../src/auth.rs) 管理有界内存会话，操作系统随机令牌不包含密码，24 小时后过期，退出撤销，服务重启失效。前端 [AuthGate.tsx](../frontend/src/AuthGate.tsx) 先读取认证状态，登录后才挂载素材界面；数据请求返回 401 时回到登录页。密码仅在登录表单内存中短暂保留，不写入浏览器持久存储。语言切换由 [LanguageMenu.tsx](../frontend/src/LanguageMenu.tsx) 提供统一菜单样式。
 
@@ -103,7 +105,7 @@ HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监�
 
 [mcp_tools.rs](../src/mcp_tools.rs) 将现有索引和 DesignService 映射为 10 个明确工具。先查询已导入的库和目录，再按素材名/路径/标签与尺寸等字段搜索，默认返回 24、最多 50 个候选，不读取任意目录，也没有视觉语义索引。`preview_assets` 返回真实 PNG 拼版与编号，`get_render` 返回真实预览 PNG，使用 MCP 标准 image content 的 base64 数据，不要求模型通过浏览器 Cookie 下载缩略图。成功结果同时提供结构化元数据；业务失败以 `isError` 提供给模型，协议错误使用 JSON-RPC error。
 
-[mcp_auth.rs](../src/mcp_auth.rs) 默认为关闭，`PICSOC_MCP_ENABLED=true` 或 `--mcp` 显式启用。支持独立静态 Bearer token（至少 32 个 printable ASCII 字符），或通过 HTTPS `PICSOC_PUBLIC_URL` 与现有共享密码启用单拥有者 OAuth。URL 必须是显式配置的根 origin，不从请求 Host/X-Forwarded-Host 推断；仅开发时允许 loopback HTTP，局域网 HTTP 地址不能用作公开 OAuth issuer。MCP Origin 缺省可接受，存在时须精确匹配已配置 origin；token-only 模式拒绝带 Origin 的调用。
+[mcp_auth.rs](../src/mcp_auth.rs) 默认为关闭，TOML `[mcp]` 表中的 `enabled = true` 或 `--mcp` 显式启用。支持独立静态 Bearer token（至少 32 个 printable ASCII 字符），或通过 HTTPS `mcp.public_url` 与现有共享密码启用单拥有者 OAuth。URL 必须是显式配置的根 origin，不从请求 Host/X-Forwarded-Host 推断；仅开发时允许 loopback HTTP，局域网 HTTP 地址不能用作公开 OAuth issuer。MCP Origin 缺省可接受，存在时须精确匹配已配置 origin；token-only 模式拒绝带 Origin 的调用。
 
 OAuth 实现 protected-resource 与 authorization-server 发现、精确回调白名单的 DCR、S256 PKCE、两分钟单次授权码、resource/audience 绑定、read/write 作用域、短期访问令牌、refresh 轮转与重放撤销。默认回调为 `https://chatgpt.com/connector_platform_oauth_redirect`；授权响应附精确 issuer，额外回调只能显式配置完整地址。public/secret-post/secret-basic 客户端均可注册，注册最多 128 个且每分钟最多 5 次；待授权请求和 code 各最多 128 项，token/refresh/replay 集合各最多 512 项。
 

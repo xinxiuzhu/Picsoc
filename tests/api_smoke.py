@@ -73,8 +73,19 @@ class SmokeTest(unittest.TestCase):
             environment.pop(name, None)
         self.authorization = None
         if password:
-            environment['PICSOC_PASSWORD'] = password
             self.authorization = 'Basic ' + base64.b64encode(f'picsoc:{password}'.encode()).decode()
+        data = self.root / 'data'
+        data.mkdir(exist_ok=True)
+        # JSON string escaping is valid TOML basic-string escaping for these values.
+        config = '\n'.join([
+            'bind = ' + json.dumps(bind or f'127.0.0.1:{self.port}'),
+            'data_dir = ' + json.dumps(str(data), ensure_ascii=False),
+            'open_browser = false', 'workers = 1', 'scan_interval = 0',
+            'password = ' + json.dumps(password or '', ensure_ascii=False),
+            '[mcp]', 'enabled = false', 'public_url = ""', 'token = ""',
+            'redirect_uris = []', '',
+        ])
+        (data / 'config.toml').write_text(config, encoding='utf-8')
         self.process = subprocess.Popen([self.binary, '--bind', bind or f'127.0.0.1:{self.port}', '--data-dir', str(self.root / 'data'), '--no-open', '--workers', '1'], stdout=self.log, stderr=subprocess.STDOUT, env=environment)
         for _ in range(150):
             try:

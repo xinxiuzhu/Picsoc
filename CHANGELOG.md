@@ -2,6 +2,9 @@
 
 ## 未发布 / Unreleased
 
+- 首次启动在数据目录自动生成 `config.toml`，停止后编辑、重启生效；支持 `--config` 和显式 CLI 覆盖，已有配置不重写，非法配置直接拒绝启动。运行配置不再读取环境变量；Docker 同样使用持久化 TOML。
+- Generate persistent TOML configuration on first startup, with explicit CLI overrides, validation and Unix `0600` creation. Runtime settings move from environment variables to `config.toml`, including Docker.
+
 - 新增可选 MCP Streamable HTTP 服务，提供素材库与目录查询、搜索、带编号的实际图片拼版、字体查询和设计布局/合成工具；默认关闭，网页登录与 MCP 授权独立。
 - 支持用于 ChatGPT 的 OAuth 发现、精确回调白名单、S256 PKCE、单次授权码、短期访问令牌和 refresh 轮转；凭据只持久化哈希，支持重启后继续授权。独立 Bearer token 用于支持该方式的本地/API 客户端。
 - 新增 Rust PNG 合成：素材图层、矩形/圆角矩形和文字图层，透明通道、缩放模式、文字换行与对齐；单渲染线程与有界队列，先预览再导出原画布尺寸。

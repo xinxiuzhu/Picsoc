@@ -84,6 +84,14 @@ jobs:
           else
             node tests/mcp_smoke.mjs target/release/picsoc
           fi
+      - name: Exercise generated TOML configuration
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == 'Windows' ]]; then
+            node tests/config_smoke.mjs target/release/picsoc.exe
+          else
+            node tests/config_smoke.mjs target/release/picsoc
+          fi
 
   debian:
     name: Rust and Web / Debian 12
@@ -112,6 +120,7 @@ jobs:
       - run: ./target/release/picsoc --version
       - run: python3 tests/api_smoke.py --binary target/release/picsoc
       - run: node tests/mcp_smoke.mjs target/release/picsoc
+      - run: node tests/config_smoke.mjs target/release/picsoc
 
   docker:
     name: Docker build and smoke test
@@ -142,3 +151,4 @@ jobs:
           python3 -c 'from pathlib import Path; assert "<html" in Path("/tmp/picsoc-index.html").read_text().lower()'
           curl --fail --silent http://127.0.0.1:3210/api/design-fonts > /tmp/picsoc-fonts.json
           python3 -c 'import json; fonts=json.load(open("/tmp/picsoc-fonts.json"))["fonts"]; assert any(f["supports_chinese"] for f in fonts), "Chinese rendering font missing"'
+          docker exec picsoc-ci sh -c 'test -s /data/config.toml && test "$(stat -c %a /data/config.toml)" = 600'

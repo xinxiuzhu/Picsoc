@@ -10,19 +10,34 @@ MCP is disabled by default. Deploying this code does not install a connection in
 
 The LAN Web address in this example is `http://192.168.2.101:3210/`. Cloud ChatGPT cannot reach that private address directly. Use the HTTPS reverse proxy at `https://orionai.iepose.cn`, or your own HTTPS domain. Configure the proxy to forward `/mcp`, `/.well-known/` and `/oauth/`, including the Authorization header, to the same Picsoc process. Do not strip those path prefixes. The [operations guide](OPERATIONS.md) includes an Nginx example.
 
-Update the source, stop the old process through the service manager or its terminal, then restart it with the same data directory and existing password:
+Stop the old process, update the source, and run the service:
 
 ```sh
 git pull --ff-only
-PICSOC_MCP_ENABLED=true \
-PICSOC_PUBLIC_URL=https://orionai.iepose.cn \
-PICSOC_PASSWORD='replace-with-your-current-password' \
-cargo run --locked --release -- --bind 0.0.0.0:3210 --no-open
+cargo run --locked --release
 ```
 
-If the old process used `--data-dir`, pass that same argument. The default Linux directory is `$XDG_DATA_HOME/picsoc`, or `~/.local/share/picsoc`. Keep it to reuse the indexed library, layouts, outputs and OAuth credentials. `PICSOC_PUBLIC_URL` must be an HTTPS origin without a path, query, fragment or credentials. HTTP is allowed only for loopback development, not the LAN OAuth issuer.
+On first startup, Picsoc generates `config.toml` in its data directory and prints the path. Press `Ctrl+C`, edit that file, keeping its generated `data_dir`, and change these fields:
 
-For Docker, set `PICSOC_MCP_ENABLED=true`, `PICSOC_PUBLIC_URL` and a nonempty `PICSOC_PASSWORD` in `.env`, then rebuild/recreate the service with `docker compose up -d --build`. Retain the existing `/data` mount and read-only `/library` mount. Set the published bind address so Nginx can reach it; the domain still terminates HTTPS at the proxy.
+```toml
+bind = "0.0.0.0:3210"
+open_browser = false
+password = "replace-with-your-current-password"
+
+[mcp]
+enabled = true
+public_url = "https://orionai.iepose.cn"
+token = ""
+redirect_uris = []
+```
+
+Edit the existing fields rather than appending duplicate keys/tables. Run `cargo run --locked --release` again. Existing configuration is retained, and invalid configuration prevents startup. Runtime environment variables are no longer read; manually copy previous settings into TOML.
+
+If the old process used `--data-dir`, keep that same argument; it also locates the default configuration file. Linux uses `$XDG_DATA_HOME/picsoc` or `~/.local/share/picsoc`, including `/root/.local/share/picsoc/config.toml` for root by default. Keep the data directory to reuse your indexed library, layouts, outputs and OAuth credentials. `--config PATH` selects a different configuration file. Explicit CLI arguments override file values without rewriting an existing file.
+
+`mcp.public_url` must be an HTTPS origin without a path, query, fragment or credentials. HTTP is allowed only for loopback development, not a LAN OAuth issuer.
+
+Docker generates host file `picsoc-data/config.toml` at `/data/config.toml`. On the first run, use `docker compose up -d --build`, then `docker compose stop picsoc`, edit `password` and `[mcp]`, and `docker compose start picsoc`. Upgrade an existing container with `docker compose up -d --build`; later file edits take effect after `docker compose restart picsoc`. Retain the `/data` and read-only `/library` mounts. Set the published port address in `compose.yaml` so Nginx can reach it; the domain terminates HTTPS at the proxy.
 
 Check discovery after restarting:
 
@@ -36,7 +51,7 @@ The discovery requests should return JSON. The unauthenticated `/mcp` request sh
 
 In ChatGPT, use **Plugins → + → Add custom MCP server**, enter `https://orionai.iepose.cn/mcp`, and select OAuth. Install/test the connection, follow the Picsoc authorization page, and enter your Picsoc password there. The client discovers registration and token endpoints automatically; do not enter the shared password as a client secret. Availability and creation permissions depend on the account/workspace. Follow the current [OpenAI connection instructions](https://developers.openai.com/plugins/deploy/connect-chatgpt) if the entry point differs.
 
-The authorization server supports public clients and `client_secret_post`/`client_secret_basic`, S256 PKCE, and the exact resource `https://orionai.iepose.cn/mcp`. It advertises issuer identification; the default allowed ChatGPT redirect is `https://chatgpt.com/connector_platform_oauth_redirect`. If the management page shows another production callback, copy its **complete** URL into `PICSOC_MCP_REDIRECT_URIS` (comma-separated) or repeat `--mcp-redirect-uris`. Wildcards and arbitrary redirect hosts are not accepted. See [OpenAI's authentication requirements](https://developers.openai.com/plugins/build/auth).
+The authorization server supports public clients and `client_secret_post`/`client_secret_basic`, S256 PKCE, and the exact resource `https://orionai.iepose.cn/mcp`. It advertises issuer identification; the default allowed ChatGPT redirect is `https://chatgpt.com/connector_platform_oauth_redirect`. If the management page shows another production callback, copy its **complete** URL into the TOML string array `mcp.redirect_uris`, then restart. For example: `redirect_uris = ["https://chatgpt.com/connector/oauth/your-exact-callback-id"]`. Wildcards and arbitrary redirect hosts are not accepted. See [OpenAI's authentication requirements](https://developers.openai.com/plugins/build/auth).
 
 `picsoc:read` permits discovery, search, asset previews and reading existing designs/results. `picsoc:write`, together with read, permits saving layouts and submitting renders. Access tokens last one hour; refresh families last at most seven days and rotate on every use. Replaying a consumed refresh token revokes that client's entire token family. Client registrations and token hashes persist in `mcp-oauth.json`; unexpired credentials survive service restarts. In-progress browser authorization and one-use codes do not survive a restart. No plaintext access/refresh token, client secret or shared password is saved in that file. Back up the whole data directory and protect it as account data.
 
@@ -86,12 +101,14 @@ Scenes store source-version fingerprints, not image copies. If a source changes,
 
 ## Other local MCP clients
 
-A client that supports a custom Authorization header can use an independent static token:
+A client that supports a custom Authorization header can use an independent static token. Edit the generated configuration, then restart with `cargo run --locked --release`:
 
-```sh
-PICSOC_MCP_ENABLED=true \
-PICSOC_MCP_TOKEN='replace-with-a-random-token-of-at-least-32-ASCII-characters' \
-cargo run --locked --release -- --no-open
+```toml
+[mcp]
+enabled = true
+public_url = ""
+token = "replace-with-a-random-token-of-at-least-32-ASCII-characters"
+redirect_uris = []
 ```
 
 Connect that client to `http://127.0.0.1:3210/mcp` with `Authorization: Bearer <token>`. This credential has read and write access. It is separate from Web Cookie/Basic Auth and is not an OAuth client secret. Token-only mode rejects requests carrying an Origin header; this route is intended for server/CLI clients, not cross-origin browser calls.

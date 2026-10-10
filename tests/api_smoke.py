@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import sqlite3
 import struct
 import subprocess
 import tempfile
@@ -535,6 +536,107 @@ class SmokeTest(unittest.TestCase):
         self.assertIn('新空目录', children)
         self.assertNotIn('纯空目录', children)
         self.assertEqual(children['新空目录']['asset_count'], 0)
+
+    def test_hidden_directory_scans_and_legacy_tree_pagination(self):
+        hidden_images = [self.library / '.git' / 'objects' / 'hidden.png',
+                         self.library / '子文件夹' / '.cache' / '深层' / 'hidden.png']
+        for path in hidden_images:
+            path.parent.mkdir(parents=True)
+            write_png(path)
+        (self.library / 'only-hidden' / '.git').mkdir(parents=True)
+        for name in ('alpha', 'empty'):
+            (self.library / name).mkdir()
+        # Only directories are excluded; a dot-named image is still an ordinary asset.
+        write_png(self.library / '.preview.png')
+        library = self.request('/api/libraries', 'POST', {'name': '隐藏目录检查', 'path': str(self.library)})
+        library_id = library['id']
+        assets = self.wait_scan(library_id, 4)
+        self.assertEqual({asset['name'] for asset in assets}, {'风景.png', '动态.gif', '.preview.png'})
+        visible_asset = next(asset for asset in assets if asset['relative_path'] == '风景.png')
+        self.request(f"/api/assets/{visible_asset['id']}", 'PATCH',
+                     {'favorite': True, 'tags': ['保留标签']})
+
+        folders_url = f'/api/libraries/{library_id}/folders'
+        expected_names = ['alpha', 'empty', 'only-hidden', '子文件夹']
+        tree = self.request(folders_url)
+        self.assertEqual([folder['name'] for folder in tree['folders']], expected_names)
+        self.assertTrue(all(not folder['has_children'] for folder in tree['folders']))
+        self.assertEqual(tree['direct_asset_count'], 3)
+
+        # Simulate an old installation using this test's isolated database. Keeping
+        # the service running avoids startup's automatic rescan before the API check.
+        rows = []
+        legacy_paths = [f'.hidden{index:04}/objects' for index in range(1100)]
+        legacy_paths.extend(['.git/objects', '子文件夹/.cache/深层', 'only-hidden/.git'])
+        for relative in legacy_paths:
+            parts = relative.split('/')
+            for depth in range(1, len(parts) + 1):
+                native = str(Path(*parts[:depth]))
+                parent = str(Path(*parts[:depth - 1])) if depth > 1 else ''
+                rows.append((library_id, native, parent, parts[depth - 1], 0))
+        with sqlite3.connect(self.root / 'data' / 'picsoc.sqlite3', timeout=10) as connection:
+            connection.executemany(
+                'INSERT OR IGNORE INTO library_folders(library_id,relative_path,parent,name,seen_generation) '
+                'VALUES(?,?,?,?,?)', rows)
+            legacy_ids = []
+            for path in hidden_images:
+                relative = str(path.relative_to(self.library))
+                cursor = connection.execute(
+                    'INSERT INTO assets(library_id,relative_path,name,format,size,width,height,modified_at,'
+                    'mtime_ns,seen_generation,parent_folder) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                    (library_id, relative, path.name, 'png', path.stat().st_size, 32, 24, 1, 1, 0,
+                     str(path.parent.relative_to(self.library))))
+                legacy_ids.append(cursor.lastrowid)
+        self.assertEqual(self.asset_query(library_id=library_id)['total'], 6)
+
+        collected = []
+        cursor = None
+        for _ in range(3):
+            parameters = {'limit': 2}
+            if cursor is not None:
+                parameters['cursor'] = cursor
+            page = self.request(folders_url + '?' + urllib.parse.urlencode(parameters))
+            self.assertEqual(len(page['folders']), 2)
+            self.assertTrue(all(not folder['has_children'] for folder in page['folders']))
+            self.assertEqual(page['truncated'], page['next_cursor'] is not None)
+            collected.extend(folder['name'] for folder in page['folders'])
+            cursor = page['next_cursor']
+            if cursor is None:
+                break
+        else:
+            self.fail('Visible folder pagination did not finish')
+        self.assertEqual(collected, expected_names)
+        for parent in ('.git', str(Path('.git') / 'objects'), str(Path('子文件夹') / '.cache')):
+            hidden_tree = self.request(folders_url + '?' + urllib.parse.urlencode({'parent': parent}))
+            self.assertEqual(hidden_tree['folders'], [])
+            self.assertEqual(hidden_tree['direct_asset_count'], 0)
+            self.assertFalse(hidden_tree['truncated'])
+            self.assertIsNone(hidden_tree['next_cursor'])
+        after_hidden_cursor = self.request(folders_url + '?' + urllib.parse.urlencode(
+            {'cursor': '.hidden1099', 'limit': 2}))
+        self.assertEqual([folder['name'] for folder in after_hidden_cursor['folders']], ['alpha', 'empty'])
+
+        self.request(f'/api/libraries/{library_id}/scan', 'POST')
+        self.wait_scan(library_id, 4)
+        self.assertEqual(self.asset_query(library_id=library_id)['total'], 4)
+        for asset_id in legacy_ids:
+            with self.assertRaises(urllib.error.HTTPError) as response:
+                self.request(f'/api/assets/{asset_id}')
+            self.assertEqual(response.exception.code, 404)
+            response.exception.close()
+        retained = self.request(f"/api/assets/{visible_asset['id']}")
+        self.assertTrue(retained['favorite'])
+        self.assertEqual(retained['tags'], ['保留标签'])
+        self.assertTrue(all(path.is_file() for path in hidden_images))
+
+        # An explicitly selected hidden root may still be imported by entering its path.
+        explicit_root = self.root / '.explicit-library'
+        explicit_root.mkdir()
+        write_png(explicit_root / '导入.png')
+        explicit = self.request('/api/libraries', 'POST',
+                                {'name': '显式根目录', 'path': str(explicit_root)})
+        self.wait_scan(explicit['id'], 5)
+        self.assertEqual(self.asset_query(library_id=explicit['id'])['total'], 1)
 
     def test_advanced_image_filters_combination_pagination_and_validation(self):
         directory = self.library / '筛选'

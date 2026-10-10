@@ -464,6 +464,16 @@ impl Db {
         let cursor = cursor
             .map(|cursor| folders::normalize_cursor(&parent, cursor))
             .transpose()?;
+        if folders::is_hidden_subdirectory(Path::new(&parent)) {
+            return Ok(FolderList {
+                folders: Vec::new(),
+                parent,
+                truncated: false,
+                direct_asset_count: 0,
+                separator: std::path::MAIN_SEPARATOR.to_string(),
+                next_cursor: None,
+            });
+        }
         self.with(|conn| {
             let direct_asset_count = conn.query_row(
                 "SELECT COUNT(*) FROM assets WHERE library_id=?1 AND parent_folder=?2",
@@ -472,8 +482,8 @@ impl Db {
             let children = {
                 let mut sql =
                     "SELECT relative_path,name,
-                     EXISTS(SELECT 1 FROM library_folders child WHERE child.library_id=f.library_id AND child.parent=f.relative_path AND child.relative_path<>'')
-                     FROM library_folders f WHERE library_id=? AND parent=? AND relative_path<>''".to_owned();
+                     EXISTS(SELECT 1 FROM library_folders child WHERE child.library_id=f.library_id AND child.parent=f.relative_path AND child.relative_path<>'' AND child.name NOT GLOB '.*')
+                     FROM library_folders f WHERE library_id=? AND parent=? AND relative_path<>'' AND name NOT GLOB '.*'".to_owned();
                 let mut values = vec![Value::from(library_id), Value::from(parent.clone())];
                 if let Some(cursor) = &cursor {
                     sql.push_str(" AND relative_path>?");
@@ -1289,6 +1299,62 @@ mod tests {
                 .name,
             "a.png"
         );
+    }
+
+    #[test]
+    fn legacy_hidden_folders_do_not_consume_pages_or_create_empty_expanders() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.sqlite")).unwrap();
+        let library = db
+            .add_library("素材", temp.path().to_str().unwrap())
+            .unwrap();
+        let native = |path: &str| path.replace('/', std::path::MAIN_SEPARATOR_STR);
+        let mut paths = (0..1100)
+            .map(|index| format!(".hidden{index:04}/objects"))
+            .map(|path| native(&path))
+            .collect::<Vec<_>>();
+        let visible = ["alpha", "beta", "empty", "only-hidden", "release.v1"];
+        paths.extend(visible.into_iter().map(str::to_owned));
+        paths.push(native("only-hidden/.git/objects"));
+        for batch in paths.chunks(100) {
+            db.index_folders(library.id, 1, batch).unwrap();
+        }
+        let mut cursor = None;
+        let mut visited = Vec::new();
+        loop {
+            let page = db
+                .folders_page(library.id, "", cursor.as_deref(), 2)
+                .unwrap();
+            assert!(!page.folders.is_empty());
+            assert!(page.folders.iter().all(|folder| !folder.has_children));
+            visited.extend(page.folders.into_iter().map(|folder| folder.path));
+            if !page.truncated {
+                assert!(page.next_cursor.is_none());
+                break;
+            }
+            cursor = page.next_cursor;
+        }
+        assert_eq!(visited, visible);
+        let only_hidden = db.folders(library.id, "only-hidden").unwrap();
+        assert!(only_hidden.folders.is_empty());
+        assert!(!only_hidden.truncated);
+        let hidden_parent = db.folders(library.id, ".hidden0000").unwrap();
+        assert!(hidden_parent.folders.is_empty());
+        assert_eq!(hidden_parent.direct_asset_count, 0);
+        assert!(!hidden_parent.truncated);
+        assert!(hidden_parent.next_cursor.is_none());
+        assert!(
+            db.folders(library.id, &native("only-hidden/.git"))
+                .unwrap()
+                .folders
+                .is_empty()
+        );
+        // Hidden legacy cursors remain usable just like a deleted sibling cursor.
+        let page = db
+            .folders_page(library.id, "", Some(".hidden1099"), 2)
+            .unwrap();
+        assert_eq!(page.folders[0].path, "alpha");
+        assert_eq!(page.next_cursor.as_deref(), Some("beta"));
     }
 
     #[test]

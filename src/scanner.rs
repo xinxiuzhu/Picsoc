@@ -223,6 +223,12 @@ impl Scanner {
                 }
             };
             if entry.file_type().is_dir() {
+                if entry.depth() > 0 && folders::is_hidden_directory_name(entry.file_name()) {
+                    // Prune old hidden indexes only after this traversal completes successfully.
+                    // Skipping now also discards any buffered permission error for this directory.
+                    entries.skip_current_dir();
+                    continue;
+                }
                 if entry.path() == data_dir {
                     entries.skip_current_dir();
                     continue;
@@ -422,6 +428,89 @@ mod tests {
             modified_at: 1,
             mtime_ns: 1,
         }
+    }
+
+    #[tokio::test]
+    async fn hidden_subtrees_are_skipped_and_legacy_indexes_are_pruned_after_success() {
+        // A root explicitly selected by the user remains valid even with a leading dot.
+        let (_temp, root, db, id, scanner) = fixture(".selected");
+        let hidden = [
+            Path::new(".git").join("objects"),
+            Path::new("普通").join(".cache").join("深层"),
+        ];
+        for path in &hidden {
+            std::fs::create_dir_all(root.join(path)).unwrap();
+            write_png(&root.join(path).join("hidden.png"));
+        }
+        std::fs::create_dir(root.join("空目录")).unwrap();
+        write_png(&root.join(".preview.png"));
+        write_png(&root.join("普通").join("visible.png"));
+        let legacy = db
+            .index_batch(
+                id,
+                0,
+                &[
+                    old_record(&hidden[0].join("hidden.png")),
+                    old_record(&hidden[1].join("hidden.png")),
+                    old_record(&Path::new("普通").join("visible.png")),
+                ],
+            )
+            .unwrap();
+        let visible_id = legacy[2].0.id;
+        db.patch_asset(
+            visible_id,
+            &AssetPatch {
+                favorite: Some(true),
+                tags: Some(vec!["保留标签".into()]),
+            },
+        )
+        .unwrap();
+        assert_eq!(db.stats().unwrap().total_assets, 3);
+        scanner.start(id);
+        wait_scan(&scanner, id).await;
+        assert_eq!(scanner.status(id).processed, 2);
+        assert_eq!(db.stats().unwrap().total_assets, 2);
+        for (asset, _) in &legacy[..2] {
+            assert!(db.asset(asset.id).is_err());
+        }
+        let retained = db.asset(visible_id).unwrap();
+        assert!(retained.favorite);
+        assert_eq!(retained.tags, vec!["保留标签"]);
+        assert!(
+            db.assets(&AssetQuery::default())
+                .unwrap()
+                .assets
+                .iter()
+                .any(|asset| asset.name == ".preview.png")
+        );
+        let tree = db.folders(id, "").unwrap();
+        assert_eq!(tree.folders.len(), 2);
+        assert!(tree.folders.iter().all(|folder| !folder.has_children));
+        assert!(tree.folders.iter().any(|folder| folder.name == "空目录"));
+        for path in hidden {
+            assert!(root.join(path).join("hidden.png").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_hidden_directory_does_not_fail_the_scan() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        write_png(&root.join("可读.png"));
+        let hidden = root.join(".git");
+        std::fs::create_dir(&hidden).unwrap();
+        write_png(&hidden.join("跳过.png"));
+        let permissions = std::fs::metadata(&hidden).unwrap().permissions();
+        std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o0)).unwrap();
+        scanner.start(id);
+        let status = scan_status(&scanner, id).await;
+        std::fs::set_permissions(&hidden, permissions).unwrap();
+        assert_eq!(status.state, "idle", "{status:?}");
+        assert_eq!(db.stats().unwrap().total_assets, 1);
+        assert_eq!(status.processed, 1);
+        assert!(db.folders(id, "").unwrap().folders.is_empty());
     }
 
     #[tokio::test]
@@ -733,7 +822,14 @@ mod tests {
         let (_temp, root, db, id, scanner) = fixture("素材");
         db.index_folders(id, 0, &["旧空目录".into()]).unwrap();
         let indexed = db
-            .index_batch(id, 0, &[old_record(&Path::new("旧目录").join("旧图.png"))])
+            .index_batch(
+                id,
+                0,
+                &[
+                    old_record(&Path::new("旧目录").join("旧图.png")),
+                    old_record(&Path::new(".git").join("旧图.png")),
+                ],
+            )
             .unwrap();
         // Keep the traversal queued so cancellation deterministically happens before any pruning.
         let permit = scanner.gate.clone().acquire_owned().await.unwrap();
@@ -742,6 +838,7 @@ mod tests {
         drop(permit);
         wait_scan(&scanner, id).await;
         assert!(db.asset(indexed[0].0.id).is_ok());
+        assert!(db.asset(indexed[1].0.id).is_ok());
         assert_eq!(db.folders(id, "").unwrap().folders.len(), 2);
         assert!(!root.join("旧目录").exists());
     }

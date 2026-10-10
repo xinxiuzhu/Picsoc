@@ -422,7 +422,7 @@ fn list_directories(path: Option<String>) -> Result<DirectoryList> {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if name.starts_with('.') {
+        if folders::is_hidden_directory_name(entry.file_name().as_os_str()) {
             continue;
         }
         let Ok(kind) = entry.file_type() else {

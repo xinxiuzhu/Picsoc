@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle, ArrowUp, Check, ChevronDown, ChevronRight, Folder, Grid2X2, Grid3X3,
-  HardDrive, Images, LayoutGrid, ListChecks, LoaderCircle, LogOut, Menu, Plus,
+  HardDrive, Images, LayoutGrid, ListChecks, LoaderCircle, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus,
   RefreshCw, Search, SlidersHorizontal, Star, Tag, Trash2, X,
 } from 'lucide-react';
 import { api, errorMessage, formatSize } from './api';
@@ -14,6 +14,8 @@ import { LibraryTree, folderBreadcrumbs } from './LibraryTree';
 import { FilterPanel, EMPTY_IMAGE_FILTERS, appendImageFilters, parseExcludedNames, excludedNamesError, SORT_OPTIONS, SORT_KEYS } from './FilterPanel';
 import type { ImageFilters } from './FilterPanel';
 import { LanguageMenu } from './LanguageMenu';
+import { DisplaySettings, getSavedDisplay, saveDisplay } from './DisplaySettings';
+import type { DisplayPreferences } from './DisplaySettings';
 
 type Category = 'all' | 'favorites';
 const EMPTY_STATS: Stats = { total_assets: 0, total_size: 0, total_favorites: 0, total_libraries: 0 };
@@ -27,12 +29,9 @@ function getSavedExcludedNames(): string {
   } catch { return ''; }
 }
 
-function getSavedDensity(): number {
-  try {
-    const value = Number(localStorage.getItem('picsoc-density'));
-    return [160, 220, 280].includes(value) ? value : 220;
-  }
-  catch { return 220; }
+function getSavedSidebarCollapsed(): boolean {
+  try { return localStorage.getItem('picsoc-sidebar-collapsed') === 'true'; }
+  catch { return false; }
 }
 
 export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
@@ -56,7 +55,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [imageFilters, setImageFilters] = useState<ImageFilters>({ ...EMPTY_IMAGE_FILTERS });
   const [showFilters, setShowFilters] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
-  const [density, setDensity] = useState(getSavedDensity);
+  const [display, setDisplay] = useState(getSavedDisplay);
   const [showAdd, setShowAdd] = useState(false);
   const [managedLibrary, setManagedLibrary] = useState<Library | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -66,6 +65,8 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [selected, setSelected] = useState<{ asset: Asset; index: number } | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(getSavedSidebarCollapsed);
+  const [mobileViewport, setMobileViewport] = useState(() => window.matchMedia('(max-width: 700px)').matches);
   const [showAllTags, setShowAllTags] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
@@ -79,11 +80,32 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const folderTrail = useMemo(() => folderBreadcrumbs(folder, folderSeparator), [folder, folderSeparator]);
   const scrollElement = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
+  const sidebarVisible = mobileViewport ? sidebarOpen : !sidebarCollapsed;
+  const sidebarLabel = t(mobileViewport ? sidebarOpen ? 'app.closeNavigation' : 'app.openNavigation' : sidebarCollapsed ? 'app.expandSidebar' : 'app.collapseSidebar');
+  const toggleSidebar = useCallback(() => {
+    if (mobileViewport) setSidebarOpen(previous => !previous);
+    else setSidebarCollapsed(previous => !previous);
+  }, [mobileViewport]);
+  useEffect(() => {
+    const viewport = window.matchMedia('(max-width: 700px)');
+    const changed = () => { setMobileViewport(viewport.matches); setSidebarOpen(false); };
+    viewport.addEventListener('change', changed);
+    return () => viewport.removeEventListener('change', changed);
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('picsoc-sidebar-collapsed', String(sidebarCollapsed)); }
+    catch { /* Navigation also works when browser storage is unavailable. */ }
+  }, [sidebarCollapsed]);
+  useEffect(() => { saveDisplay(display); }, [display]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || document.querySelector('[role="dialog"]')) return;
       const target = event.target;
       const editing = target instanceof HTMLElement && (target.matches('input, textarea, select') || target.isContentEditable);
+      if ((event.metaKey || event.ctrlKey) && event.key === '\\' && !event.altKey) {
+        event.preventDefault(); toggleSidebar();
+      }
+      if (event.key === 'Escape' && mobileViewport && sidebarOpen) setSidebarOpen(false);
       if (((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') || (!editing && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === '/')) {
         event.preventDefault();
         searchInput.current?.focus();
@@ -92,7 +114,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [toggleSidebar, mobileViewport, sidebarOpen]);
   const [gridWidth, setGridWidth] = useState(900);
   const favoritePending = useRef(new Set<number>());
   const navigatePending = useRef(false);
@@ -205,9 +227,20 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
-  const columns = Math.max(1, Math.floor((gridWidth + 16) / (density + 16)));
+  const density = display.size;
+  const automaticColumns = Math.max(1, Math.floor((gridWidth + 16) / (density + 16)));
+  const maximumColumns = Math.max(1, Math.floor((gridWidth + 16) / (120 + 16)));
+  const columns = display.columns === null ? automaticColumns : Math.min(display.columns, maximumColumns);
   const cardWidth = (gridWidth - Math.max(0, columns - 1) * 16) / columns;
-  const rowHeight = Math.round(cardWidth * 0.75) + 80;
+  const imageHeight = Math.round(Math.max(0, cardWidth - 2) * 0.75);
+  const rowHeight = imageHeight + 80;
+  const previousLayout = useRef({ columns, rowHeight });
+  const scrollAnchor = useRef({ assetIndex: 0, rowFraction: 0 });
+  const rememberScroll = () => {
+    const top = scrollElement.current?.scrollTop ?? 0;
+    const layout = previousLayout.current;
+    scrollAnchor.current = { assetIndex: Math.floor(top / layout.rowHeight) * layout.columns, rowFraction: (top % layout.rowHeight) / layout.rowHeight };
+  };
   const virtualizer = useVirtualizer({
     count: Math.ceil((assets.total ?? 0) / columns),
     getScrollElement: () => scrollElement.current,
@@ -218,7 +251,16 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const firstVisible = rows[0]?.index ?? 0;
   const lastVisible = rows[rows.length - 1]?.index ?? 0;
 
-  useEffect(() => { virtualizer.measure(); }, [rowHeight, virtualizer]);
+  useLayoutEffect(() => {
+    const previous = previousLayout.current;
+    if (previous.columns === columns && previous.rowHeight === rowHeight) return;
+    previousLayout.current = { columns, rowHeight };
+    virtualizer.measure();
+    const anchor = scrollAnchor.current;
+    // Uniform rows let the new grid include the same first visible asset after resizing.
+    virtualizer.scrollToOffset(Math.floor(anchor.assetIndex / columns) * rowHeight + anchor.rowFraction * rowHeight);
+    rememberScroll();
+  }, [columns, rowHeight, virtualizer]);
   useEffect(() => {
     if (assets.total !== null && assets.total > 0) assets.ensureRange(firstVisible * columns, (lastVisible + 1) * columns - 1);
   }, [firstVisible, lastVisible, columns, assets.total, assets.ensureRange, assets.version]);
@@ -259,9 +301,9 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     setFolder(''); setFolderDirectCount(null);
   };
   const setGridDensity = (value: number) => {
-    setDensity(value);
-    try { localStorage.setItem('picsoc-density', String(value)); } catch { /* Storage may be disabled. */ }
+    setDisplay(previous => ({ ...previous, size: value, columns: null }));
   };
+  const updateDisplay = (preferences: DisplayPreferences) => setDisplay(preferences);
   const clearFilters = () => {
     setSearch(''); setDebouncedSearch(''); setFormat(''); setSelectedTag('');
     setFavoriteOnly(false);
@@ -377,9 +419,10 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   });
   const rangeLabel = (minimum: string, maximum: string, unit: string) => `${minimum || '0'}–${maximum || '∞'} ${unit}`;
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${!mobileViewport && sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
     {sidebarOpen && <button className="sidebar-backdrop" aria-label={t('app.closeNavigation')} onClick={() => setSidebarOpen(false)} />}
-    <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+    <aside id="picsoc-sidebar" className={`sidebar ${sidebarOpen ? 'open' : ''}`} aria-hidden={!sidebarVisible} inert={!sidebarVisible}>
+      <button className="icon-button sidebar-dismiss" aria-label={t('app.closeNavigation')} onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       <a className="brand" href="#" onClick={event => { event.preventDefault(); resetFilters(); setSidebarOpen(false); }} aria-label={t('app.brandHome')}><span className="brand-mark"><Images size={23} strokeWidth={1.8} /></span><span>Picsoc<span className="brand-subtitle">{t('app.brandSubtitle')}</span></span></a>
       <div className="sidebar-scroll">
         <nav className="primary-navigation" aria-label={t('app.mainNavigation')}>
@@ -397,9 +440,9 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><div className="topbar-leading"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label={t('app.openNavigation')}><Menu size={21} /></button><span className="topbar-location"><Images size={18} />{t('app.assetSpace')}</span></div><label className="search-field"><Search size={18} /><input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchAssets')} />{!search && <kbd aria-hidden="true">/</kbd>}{search && <button className="icon-button compact" onClick={() => setSearch('')} aria-label={t('app.clearSearch')}><X size={15} /></button>}</label><div className="topbar-actions"><LanguageMenu />{onLogout && <button className="icon-button logout-button" aria-label={t('app.auth.signOut')} title={t('app.auth.signOut')} disabled={logoutBusy} onClick={() => { if (logoutBusy) return; setLogoutBusy(true); void onLogout().catch(cause => notify(errorMessage(cause), true)).finally(() => setLogoutBusy(false)); }}>{logoutBusy ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}</button>}<button className="button primary top-add" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /><span>{t('app.addLibrary')}</span></button></div></header>
+      <header className="topbar"><div className="topbar-leading"><button className="icon-button sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={sidebarVisible} aria-controls="picsoc-sidebar">{mobileViewport ? <Menu size={21} /> : sidebarCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}</button><span className="topbar-location"><Images size={18} />{t('app.assetSpace')}</span></div><label className="search-field"><Search size={18} /><input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchAssets')} />{!search && <kbd aria-hidden="true">/</kbd>}{search && <button className="icon-button compact" onClick={() => setSearch('')} aria-label={t('app.clearSearch')}><X size={15} /></button>}</label><div className="topbar-actions"><LanguageMenu />{onLogout && <button className="icon-button logout-button" aria-label={t('app.auth.signOut')} title={t('app.auth.signOut')} disabled={logoutBusy} onClick={() => { if (logoutBusy) return; setLogoutBusy(true); void onLogout().catch(cause => notify(errorMessage(cause), true)).finally(() => setLogoutBusy(false)); }}>{logoutBusy ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}</button>}<button className="button primary top-add" onClick={() => setShowAdd(true)} aria-label={t('app.addLibrary')}><Plus size={16} /><span>{t('app.addLibrary')}</span></button></div></header>
       <section className="workspace-heading"><div><h1>{title}<span className="heading-count">{assets.total === null ? '…' : number(assets.total)}</span></h1><p>{activeLibrary ? activeLibrary.path : t(category === 'favorites' ? 'app.favoritesDescription' : 'app.allAssetsDescription')}</p></div><div className="workspace-tools"><button className={`button selection-toggle ${selectionMode ? 'active' : 'secondary'}`} aria-pressed={selectionMode} disabled={batchBusy || (!selectionMode && !assets.total)} onClick={() => { setSelectionMode(value => !value); setSelectedIds(new Set()); setSelected(null); }}><ListChecks size={16} /><span>{t(selectionMode ? 'app.batch.done' : 'app.batch.start')}</span></button></div></section>
-      <div className="toolbar"><div className="toolbar-controls"><button className={`button filter-toggle ${filterCount ? 'active' : 'secondary'}`} onClick={() => setShowFilters(true)} aria-haspopup="dialog"><SlidersHorizontal size={15} />{t('app.filters.title')}{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button><label className="select-control sort-select"><select value={sort} onChange={event => setSort(event.target.value)} aria-label={t('app.sortBy')}>{SORT_OPTIONS.map(value => <option key={value} value={value}>{t(SORT_KEYS[value])}</option>)}</select><ChevronDown size={12} /></label><div className="density-controls" role="group" aria-label={t('app.gridDensity')}><button className={density === 280 ? 'active' : ''} onClick={() => setGridDensity(280)} aria-label={t('app.largeGrid')} aria-pressed={density === 280} title={t('app.large')}><Grid2X2 size={17} /></button><button className={density === 220 ? 'active' : ''} onClick={() => setGridDensity(220)} aria-label={t('app.mediumGrid')} aria-pressed={density === 220} title={t('app.medium')}><LayoutGrid size={17} /></button><button className={density === 160 ? 'active' : ''} onClick={() => setGridDensity(160)} aria-label={t('app.compactGrid')} aria-pressed={density === 160} title={t('app.compact')}><Grid3X3 size={17} /></button></div><button className="icon-button refresh-button" onClick={() => { assets.refresh(); void loadMetadata(); void loadFolders(); }} aria-label={t('app.refreshList')} title={t('app.refreshList')}><RefreshCw size={16} /></button></div></div>
+      <div className="toolbar"><div className="toolbar-controls"><button className={`button filter-toggle ${filterCount ? 'active' : 'secondary'}`} onClick={() => setShowFilters(true)} aria-haspopup="dialog"><SlidersHorizontal size={15} />{t('app.filters.title')}{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button><label className="select-control sort-select"><select value={sort} onChange={event => setSort(event.target.value)} aria-label={t('app.sortBy')}>{SORT_OPTIONS.map(value => <option key={value} value={value}>{t(SORT_KEYS[value])}</option>)}</select><ChevronDown size={12} /></label><div className="density-controls" role="group" aria-label={t('app.gridDensity')}><button className={display.columns === null && density === 280 ? 'active' : ''} onClick={() => setGridDensity(280)} aria-label={t('app.largeGrid')} aria-pressed={display.columns === null && density === 280} title={t('app.large')}><Grid2X2 size={17} /></button><button className={display.columns === null && density === 220 ? 'active' : ''} onClick={() => setGridDensity(220)} aria-label={t('app.mediumGrid')} aria-pressed={display.columns === null && density === 220} title={t('app.medium')}><LayoutGrid size={17} /></button><button className={display.columns === null && density === 160 ? 'active' : ''} onClick={() => setGridDensity(160)} aria-label={t('app.compactGrid')} aria-pressed={display.columns === null && density === 160} title={t('app.compact')}><Grid3X3 size={17} /></button></div><DisplaySettings preferences={display} columns={columns} onChange={updateDisplay} /><button className="icon-button refresh-button" onClick={() => { assets.refresh(); void loadMetadata(); void loadFolders(); }} aria-label={t('app.refreshList')} title={t('app.refreshList')}><RefreshCw size={16} /></button></div></div>
       {activeLibrary && <section className="folder-navigation" aria-label={t('app.folders.navigation')}>
         <div className="folder-navigation-header"><nav className="folder-breadcrumb" aria-label={t('app.folders.breadcrumb')}><Folder size={14} /><button onClick={() => navigateFolder(-1)} aria-current={!folder ? 'page' : undefined} title={t('app.folders.allInLibrary')}>{activeLibrary.name}</button>{folderTrail.map((item, index) => <span key={item.path}><ChevronRight size={11} /><button onClick={() => navigateFolder(index)} aria-current={index === folderTrail.length - 1 ? 'page' : undefined} title={item.path}>{item.name}</button></span>)}</nav>{folder && <button className="folder-up" onClick={() => navigateFolder(folderTrail.length - 2)}><ArrowUp size={13} />{t('app.folders.up')}</button>}</div>
         <div className="folder-scope"><label className="folder-recursive"><input type="checkbox" checked={folderRecursive} onChange={event => setFolderRecursive(event.target.checked)} />{t('app.folders.includeChildren')}</label>{folderDirectCount !== null && <span>{t('app.folders.directCount', { count: folderDirectCount, formattedCount: number(folderDirectCount) })}</span>}</div>
@@ -422,12 +465,12 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
       {progressLibrary && <div className="notice scan-notice" role="status"><LoaderCircle size={16} className="spin" /><span>{t('app.scanning')} <strong>{progressLibrary.name}</strong><span className="scan-count">{t('app.scanProcessed', { count: progressLibrary.scan.processed, formattedCount: number(progressLibrary.scan.processed) })}{progressLibrary.scan.total !== null ? ` / ${number(progressLibrary.scan.total)}` : ''}</span></span><span className="scan-availability">{t('app.keepBrowsing')}</span><button className="scan-cancel" disabled={cancelingLibraryId !== null} onClick={() => { void cancelScan(progressLibrary); }}>{t(cancelingLibraryId === progressLibrary.id ? 'app.scanCanceling' : 'app.cancelScan')}</button>{progressLibrary.scan.total !== null && progressLibrary.scan.total > 0 && <div className="scan-progress" style={{ width: `${Math.min(100, progressLibrary.scan.processed / progressLibrary.scan.total * 100)}%` }} />}</div>}
       {!progressLibrary && scanErrors.length > 0 && <div className="notice error-notice"><AlertCircle size={16} /><span>{t('app.scanFailed', { name: scanErrors[0].name })}</span><button onClick={() => manage(scanErrors[0])}>{t('app.viewDetails')}</button></div>}
 
-      <div className="asset-scroll" ref={scrollElement}>
+      <div className="asset-scroll" ref={scrollElement} onScroll={rememberScroll}>
         {assets.error && <div className="notice error-notice asset-error" role="alert"><AlertCircle size={17} /><span>{assets.error}</span><button onClick={assets.refresh}>{t('app.reload')}</button></div>}
         {assets.total === null && !assets.error && <div className="loading-state"><LoaderCircle size={26} className="spin" /><span>{t('app.loadingAssets')}</span></div>}
         {assets.total === 0 && !assets.error && (activeLibrary && !hasFilters ? <div className="empty-state folder-empty-state"><Folder size={44} strokeWidth={1.3} /><h2>{t('app.folders.emptyTitle')}</h2><p>{t(folderRecursive ? 'app.folders.emptyDescription' : 'app.folders.emptyDirectDescription')}</p>{!folderRecursive && <button className="button secondary" onClick={() => setFolderRecursive(true)}>{t('app.folders.includeChildren')}</button>}<button className="button secondary mobile-folder-browse" onClick={() => setSidebarOpen(true)}>{t('app.folders.browseTree')}</button></div> : <EmptyState kind={metadataLoaded && libraries.length === 0 ? 'welcome' : hasFilters ? 'filtered' : 'empty'} onAdd={() => setShowAdd(true)} onReset={() => { clearFilters(); if (category === 'favorites') setCategory('all'); }} />)}
-        {assets.total !== null && assets.total > 0 && <div className="virtual-grid" style={{ height: virtualizer.getTotalSize() }} aria-label={t('app.assetList')}>
-          {rows.map(row => <div className="asset-row" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, '--image-height': `${Math.round(cardWidth * 0.75)}px` } as React.CSSProperties}>
+        {assets.total !== null && assets.total > 0 && <div className="virtual-grid" style={{ height: Math.ceil(assets.total / columns) * rowHeight }} aria-label={t('app.assetList')}>
+          {rows.map(row => <div className="asset-row" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, '--image-height': `${imageHeight}px` } as React.CSSProperties}>
             {Array.from({ length: columns }, (_, column) => {
               const index = row.index * columns + column;
               if (index >= (assets.total ?? 0)) return null;

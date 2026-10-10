@@ -1,8 +1,25 @@
-use std::path::{Component, MAIN_SEPARATOR, Path};
+use std::{
+    ffi::OsStr,
+    path::{Component, MAIN_SEPARATOR, Path},
+};
 
 use anyhow::{Result, bail};
 
 pub const PHOTOS_LIBRARY_ERROR: &str = "Apple Photos 图库不能作为普通素材文件夹导入，请先在「照片」中导出为 JPEG、PNG 或 TIFF，再添加导出文件夹";
+
+/// Apply the same dot-directory rule to the picker, scanner, and indexed tree.
+/// Checking the encoded leading ASCII dot also works for names that are not Unicode.
+pub fn is_hidden_directory_name(name: &OsStr) -> bool {
+    name.as_encoded_bytes().first() == Some(&b'.')
+}
+
+/// Paths here are relative to the explicitly selected library root. A dot-named
+/// root is allowed, but a hidden directory anywhere beneath it is not browsable.
+pub fn is_hidden_subdirectory(path: &Path) -> bool {
+    path.components().any(
+        |component| matches!(component, Component::Normal(name) if is_hidden_directory_name(name)),
+    )
+}
 
 /// Detect a package name without opening it. Callers decide whether it is a directory.
 pub fn is_photos_library(path: &Path) -> bool {
@@ -54,6 +71,25 @@ pub fn subtree_bounds(folder: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hidden_directory_rule_checks_components_without_hiding_ordinary_dotted_names() {
+        for name in [".git", ".svn", ".hg", ".cache", ".中文"] {
+            assert!(is_hidden_directory_name(OsStr::new(name)), "{name}");
+            assert!(is_hidden_subdirectory(Path::new(name)), "{name}");
+            assert!(is_hidden_subdirectory(&Path::new("普通").join(name)));
+            assert!(is_hidden_subdirectory(&Path::new(name).join("ordinary")));
+        }
+        for name in ["", "git", "release.v1", "文件夹", "ordinary.git"] {
+            assert!(!is_hidden_directory_name(OsStr::new(name)), "{name}");
+            assert!(!is_hidden_subdirectory(Path::new(name)), "{name}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert!(is_hidden_directory_name(OsStr::from_bytes(b".\xff")));
+        }
+    }
+
     #[test]
     fn photos_package_detection_preserves_unicode_and_checks_only_the_final_name() {
         for name in [

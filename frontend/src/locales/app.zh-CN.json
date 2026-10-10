@@ -179,6 +179,20 @@
       "connectionTitle": "暂时无法连接",
       "loadingTitle": "正在连接素材空间",
       "loadingDescription": "正在确认访问状态，请稍候。"
+    },
+    "collapseSidebar": "收起侧栏",
+    "expandSidebar": "展开侧栏",
+    "display": {
+      "title": "显示设置",
+      "close": "关闭显示设置",
+      "columns": "每行数量",
+      "columnCount": "{{count}} 张",
+      "currentColumns": "当前每行显示 {{count}} 张",
+      "columnsHint": "窄窗口会减少每行数量，保持素材清晰可选。",
+      "automatic": "自动排列",
+      "automaticHint": "根据窗口宽度和网格密度调整每行数量。",
+      "savedHint": "实时预览 · 自动保存",
+      "reset": "重置显示"
     }
   }
 }

@@ -2,6 +2,9 @@
 
 ## 未发布 / Unreleased
 
+- 左侧目录树与扫描跳过 `.git` 等隐藏点目录，保留普通空目录；旧隐藏素材在成功重扫后清理索引，原文件保留。
+- 支持桌面侧栏收起/展开和独立的手机抽屉；新增每行缩略图数量调节，图片保持完整显示，浏览器记住偏好。
+- Skip hidden dot-directories and add persistent sidebar and thumbnail display controls, while preserving virtualized browsing.
 - 新增简洁共享密码登录页和退出登录；会话过期自动返回登录，保留脚本 Basic Auth 兼容。
 - 语言选择改为统一菜单样式，支持键盘；修复非法网格密度缓存和目录刷新丢失已加载页数。
 - 缩略图只缩小、不放大小尺寸素材，避免小图导入产生额外处理和缓存；继续复用已生成的缓存。

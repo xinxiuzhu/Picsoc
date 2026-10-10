@@ -60,6 +60,10 @@ Apple Photos `.photoslibrary` packages are skipped, so you can add a `Pictures` 
 
 After scanning, expand the arrow next to a library in the sidebar. Folders expand and select independently; counts include descendants. Use the breadcrumb and the **Include subfolders** toggle to change scope. Existing indexes migrate their image paths into folder records; a rescan adds previously unrecorded empty directories.
 
+Hidden directories beginning with a dot, such as `.git` and `.cache`, are omitted from the folder tree and skipped during scanning. A successful rescan removes previously indexed images inside these directories while keeping the original files. Explicitly adding a hidden directory as a library root still indexes its ordinary contents.
+
+Use the top sidebar button to collapse or expand navigation. Mobile navigation remains a separate drawer. **Display settings** adjusts the number of thumbnails per row; narrow screens reduce the column count to fit. Images remain fully visible, and this browser remembers the settings. Originals and cached thumbnail files are unchanged.
+
 Open **Filters** for landscape, portrait, square, preset/custom aspect ratios, pixel width/height ranges, and file size ranges. Aspect ratios allow a ±2% relative tolerance. Assets with unknown dimensions do not match orientation, ratio, or pixel filters until dimensions are available. Combine these conditions with search, format, tags, favorites, and folder scope, and remove individual active filters.
 
 Use **Exclude filenames** to hide unwanted assets. For example, `map` hides image names containing `map` or `MAP`. Separate terms with newlines or English/Chinese commas; this browser remembers the exclusions. Matching applies to the filename, with literal `%` and `_`, and does not match folder names or tags. Original files are retained.

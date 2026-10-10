@@ -186,6 +186,20 @@
       "connectionTitle": "Unable to connect",
       "loadingTitle": "Connecting to your library",
       "loadingDescription": "Checking access. Please wait."
+    },
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
+    "display": {
+      "title": "Display settings",
+      "close": "Close display settings",
+      "columns": "Thumbnails per row",
+      "columnCount": "{{count}} per row",
+      "currentColumns": "Showing {{count}} thumbnails per row",
+      "columnsHint": "Narrow windows use fewer columns to keep thumbnails easy to see and select.",
+      "automatic": "Automatic layout",
+      "automaticHint": "Adjust columns to the window width and grid density.",
+      "savedHint": "Live preview · Auto-saved",
+      "reset": "Reset display"
     }
   }
 }

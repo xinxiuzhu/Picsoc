@@ -25,6 +25,8 @@ HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监�
 
 前端使用虚拟网格和分页，每页 100 条素材，LRU 缓存目标为 8 页，当前可见页受保护，见 [useAssets.ts](../frontend/src/useAssets.ts)。API 单页上限为 200 条，排序带 `id` 作为稳定的次级键。
 
+侧栏宽度变化由 ResizeObserver 更新网格列数。用户可指定每行缩略图数量，按可用宽度夹限；实际列数驱动卡片宽度、虚拟行高度和所需素材范围。图片保持完整显示，浏览器显示偏好与服务端缓存策略独立。
+
 ## 数据模型与并发
 
 数据库定义及查询集中在 [db.rs](../src/db.rs)，对外模型在 [models.rs](../src/models.rs)。数据库开启 WAL、`synchronous=NORMAL`、外键和 5 秒 busy timeout，当前 schema 的 `user_version` 为 2。旧版本新增 `assets.parent_folder`，每批读取 500 条素材路径回填直接父目录和所有祖先目录，迁移在事务中完成，原素材 ID、收藏和标签保留。
@@ -77,6 +79,8 @@ HTTP 默认监听 `127.0.0.1:3210`，`--bind` 可调整。启动日志区分监�
 库的绝对路径使用当前操作系统的 `canonicalize` 结果。Windows 可能返回 `\\?\C:\...` 的扩展路径，调用者应原样传回，不用文本差异判断目录身份。相对素材路径也保持平台格式：Windows 通常用反斜杠，Unix 用斜杠；Unix 文件名中的反斜杠是普通字符。
 
 [folders.rs](../src/folders.rs) 仅接受相对目录的普通组件，将平台允许的分隔符统一为主分隔符。目录 API 从 `library_folders` 按 parent 索引懒加载，空目录也返回，不在 HTTP 请求中遍历原图目录。每页最多返回 1000 个直属子文件夹（前端每页 200），超出时返回 `truncated=true` 与 `next_cursor`，用相对路径进行 keyset 分页；每项通过索引查询直接素材数量、递归素材数量及是否有子目录，并返回平台 `separator`。
+
+扫描跳过库根目录内部的隐藏点目录；目录查询在 LIMIT 前排除隐藏名称，has_children 使用相同条件，含隐藏组件的父路径返回空目录树。旧隐藏素材在成功重扫前仍计入已有素材索引，成功扫描后由常规 prune 清理；原文件不受影响。
 
 递归目录筛选利用 `(library_id, relative_path)` 索引和大小写敏感的 BINARY 前缀范围，仅当前目录的筛选使用 `parent_folder` 精确匹配。名称中的空格、点号、`%` 和 `_` 不参与通配匹配。前端 [LibraryTree.tsx](../frontend/src/LibraryTree.tsx) 独立处理目录展开与选择，缓存已加载层级；刷新后用新响应恢复可见分支的分页深度，避免丢失“加载更多”进度。
 

@@ -1,5 +1,11 @@
 # 变更记录 / Changelog
 
+## 未发布 / Unreleased
+
+- 扫描普通图片目录时跳过 Apple Photos `.photoslibrary` 图库，避免其读取权限错误使整个素材库显示扫描异常；保留旧图库索引、收藏和标签。
+- 直接选择图库包或其内部目录时提供中英文导出提示，文件夹选择器不再列出图库包；普通目录权限错误仍保留索引并报告异常。
+- Skip Apple Photos library packages when scanning image folders, retain existing package annotations, and provide localized export guidance when selecting unsupported Photos library paths.
+
 ## 0.1.0
 
 下列记录描述 0.1.0 代码中的功能。各平台验证见 [Actions](https://github.com/xinxiuzhu/Picsoc/actions)，发行包和容器镜像的可用状态以实际发布结果为准；版本附件见 [Releases](https://github.com/xinxiuzhu/Picsoc/releases)。

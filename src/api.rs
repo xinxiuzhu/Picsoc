@@ -338,10 +338,18 @@ fn list_directories(path: Option<String>) -> Result<DirectoryList> {
     anyhow::ensure!(path.len() <= 4096, "目录路径过长");
     let root = FsPath::new(&path);
     anyhow::ensure!(root.is_absolute(), "请选择绝对目录路径");
+    anyhow::ensure!(
+        !root.ancestors().any(folders::is_photos_library),
+        folders::PHOTOS_LIBRARY_ERROR
+    );
     let root = root
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("目录不可访问：{e}"))?;
     anyhow::ensure!(root.is_dir(), "路径必须是文件夹");
+    anyhow::ensure!(
+        !root.ancestors().any(folders::is_photos_library),
+        folders::PHOTOS_LIBRARY_ERROR
+    );
     let root_string = root
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("目录路径必须能转换为 Unicode"))?
@@ -363,6 +371,9 @@ fn list_directories(path: Option<String>) -> Result<DirectoryList> {
             continue;
         }
         let path = entry.path();
+        if folders::is_photos_library(&path) {
+            continue;
+        }
         if std::fs::read_dir(&path).is_err() {
             continue;
         }
@@ -445,10 +456,18 @@ async fn add_library(
     let mut library = blocking(move || {
         let path = FsPath::new(body.path.trim());
         anyhow::ensure!(path.is_absolute(), "请填写此服务所在机器的绝对目录路径");
+        anyhow::ensure!(
+            !path.ancestors().any(folders::is_photos_library),
+            folders::PHOTOS_LIBRARY_ERROR
+        );
         let canonical = path
             .canonicalize()
             .map_err(|e| anyhow::anyhow!("目录不存在或无权限：{e}"))?;
         anyhow::ensure!(canonical.is_dir(), "路径必须是文件夹");
+        anyhow::ensure!(
+            !canonical.ancestors().any(folders::is_photos_library),
+            folders::PHOTOS_LIBRARY_ERROR
+        );
         anyhow::ensure!(
             !canonical.starts_with(&state.data_dir),
             "不能把 Picsoc 数据目录作为素材目录"
@@ -938,6 +957,142 @@ mod tests {
         assert!(!list.truncated);
         assert!(list_directories(Some("relative/folder".into())).is_err());
         assert!(!list_directories(None).unwrap().roots.is_empty());
+    }
+
+    #[test]
+    fn directory_picker_skips_photos_packages_and_rejects_opening_their_contents() {
+        let temp = tempfile::tempdir().unwrap();
+        let exported = temp.path().join("导出照片");
+        std::fs::create_dir(&exported).unwrap();
+        for name in [
+            "Photos Library.photoslibrary",
+            "图库.PHOTOSLIBRARY",
+            ".photoslibrary",
+        ] {
+            let package = temp.path().join(name);
+            let contents = package.join("originals");
+            std::fs::create_dir_all(&contents).unwrap();
+            for path in [&package, &contents] {
+                let error = list_directories(Some(path.to_str().unwrap().into()))
+                    .err()
+                    .unwrap();
+                assert_eq!(error.to_string(), folders::PHOTOS_LIBRARY_ERROR);
+            }
+        }
+        let listed = list_directories(Some(temp.path().to_str().unwrap().into())).unwrap();
+        assert_eq!(listed.directories.len(), 1);
+        assert_eq!(listed.directories[0].name, "导出照片");
+        assert!(list_directories(Some(exported.to_str().unwrap().into())).is_ok());
+        let error = list_directories(Some(temp.path().join("missing").to_str().unwrap().into()))
+            .err()
+            .unwrap();
+        assert!(error.to_string().starts_with("目录不可访问："));
+        #[cfg(unix)]
+        {
+            let alias = temp.path().join("library-alias");
+            std::os::unix::fs::symlink(temp.path().join("图库.PHOTOSLIBRARY"), &alias).unwrap();
+            for path in [&alias, &alias.join("originals")] {
+                let error = list_directories(Some(path.to_str().unwrap().into()))
+                    .err()
+                    .unwrap();
+                assert_eq!(error.to_string(), folders::PHOTOS_LIBRARY_ERROR);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn photos_libraries_are_rejected_in_both_languages_before_inserting_a_library() {
+        use tower::ServiceExt;
+        let data_temp = tempfile::tempdir().unwrap();
+        let media_temp = tempfile::tempdir().unwrap();
+        let data = data_temp.path().canonicalize().unwrap();
+        let package = media_temp.path().join("照片.PHOTOSLIBRARY");
+        let contents = package.join("originals");
+        std::fs::create_dir_all(&contents).unwrap();
+        let db = Db::open(&data.join("test.sqlite")).unwrap();
+        let scanner = Scanner::new(db.clone(), data.clone(), 1);
+        let app = router(AppState {
+            db: db.clone(),
+            scanner: scanner.clone(),
+            data_dir: data,
+            bind: "127.0.0.1:3210".parse().unwrap(),
+            password: None,
+        });
+        let mut rejected_paths = Vec::new();
+        rejected_paths.extend([package, contents]);
+        #[cfg(unix)]
+        {
+            let alias = media_temp.path().join("library-alias");
+            std::os::unix::fs::symlink(&rejected_paths[0], &alias).unwrap();
+            rejected_paths.push(alias.join("originals"));
+            rejected_paths.push(alias);
+        }
+        for path in rejected_paths {
+            for language in ["zh-CN", "en"] {
+                let request = Request::builder()
+                    .method("POST")
+                    .uri("/api/libraries")
+                    .header(header::HOST, "127.0.0.1:3210")
+                    .header(header::ACCEPT_LANGUAGE, language)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"name":"相片","path":path}).to_string()))
+                    .unwrap();
+                let response = app.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                assert_eq!(
+                    response.headers().get(header::CONTENT_LANGUAGE).unwrap(),
+                    language
+                );
+                let value: serde_json::Value = serde_json::from_slice(
+                    &axum::body::to_bytes(response.into_body(), 8192)
+                        .await
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(value["code"], "photos_library_unsupported");
+                assert_eq!(
+                    value["error"],
+                    i18n::error_message(folders::PHOTOS_LIBRARY_ERROR, language == "en").0
+                );
+                assert!(db.libraries().unwrap().is_empty());
+            }
+        }
+        let exported = media_temp.path().join("导出图片");
+        std::fs::create_dir(&exported).unwrap();
+        let image_path = exported.join("image.png");
+        image::RgbImage::new(1, 1).save(&image_path).unwrap();
+        let file_request = Request::builder()
+            .method("POST")
+            .uri("/api/libraries")
+            .header(header::HOST, "127.0.0.1:3210")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"name":"文件","path":image_path}).to_string(),
+            ))
+            .unwrap();
+        let file_response = app.clone().oneshot(file_request).await.unwrap();
+        assert_eq!(file_response.status(), StatusCode::BAD_REQUEST);
+        let value: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(file_response.into_body(), 8192)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["code"], "directory_required");
+        assert!(db.libraries().unwrap().is_empty());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/libraries")
+            .header(header::HOST, "127.0.0.1:3210")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"name":"导出图片","path":exported}).to_string(),
+            ))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(db.libraries().unwrap().len(), 1);
+        scanner.cancel(db.libraries().unwrap()[0].id);
     }
 
     #[tokio::test]

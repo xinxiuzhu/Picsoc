@@ -2,6 +2,17 @@ use std::path::{Component, MAIN_SEPARATOR, Path};
 
 use anyhow::{Result, bail};
 
+pub const PHOTOS_LIBRARY_ERROR: &str = "Apple Photos 图库不能作为普通素材文件夹导入，请先在「照片」中导出为 JPEG、PNG 或 TIFF，再添加导出文件夹";
+
+/// Detect a package name without opening it. Callers decide whether it is a directory.
+pub fn is_photos_library(path: &Path) -> bool {
+    const SUFFIX: &str = ".photoslibrary";
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.get(name.len().saturating_sub(SUFFIX.len())..))
+        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(SUFFIX))
+}
+
 /// Relative library paths stay platform native. Preserve names but normalize separators.
 pub fn normalize_folder(folder: &str) -> Result<String> {
     if folder.is_empty() {
@@ -34,6 +45,30 @@ pub fn subtree_bounds(folder: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn photos_package_detection_preserves_unicode_and_checks_only_the_final_name() {
+        for name in [
+            "Photos Library.photoslibrary",
+            "相片图库.photoslibrary",
+            "图库.PHOTOSLIBRARY",
+            "照片.pHoToSlIbRaRy",
+            ".photoslibrary",
+        ] {
+            assert!(is_photos_library(&Path::new("素材").join(name)), "{name}");
+        }
+        for name in [
+            "photoslibrary",
+            "图库.photoslibrary.backup",
+            "图库.photoslibraries",
+            "photoslibrary.png",
+            "相片图库",
+            "图",
+            "图库.photoslibrary/exports",
+        ] {
+            assert!(!is_photos_library(Path::new(name)), "{name}");
+        }
+        assert!(!is_photos_library(Path::new("/")));
+    }
     #[test]
     fn relative_paths_preserve_unicode_and_reject_traversal() {
         let folder = Path::new("中文").join("壁纸");

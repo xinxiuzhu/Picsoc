@@ -33,6 +33,11 @@ pub fn wants_english(headers: &HeaderMap) -> bool {
 // Codes describe conditions, not the current language. Existing clients can continue reading `error`.
 const MESSAGES: &[(&str, &str, &str)] = &[
     (
+        crate::folders::PHOTOS_LIBRARY_ERROR,
+        "Apple Photos libraries cannot be imported as ordinary image folders. Export your photos as JPEG, PNG, or TIFF from Photos, then add the exported folder.",
+        "photos_library_unsupported",
+    ),
+    (
         "批量操作需要 1–500 个有效素材 ID",
         "Batch operations require 1–500 valid asset IDs.",
         "invalid_batch_ids",
@@ -297,6 +302,19 @@ pub fn error_message(message: &str, english: bool) -> (String, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn photos_library_errors_have_clear_export_guidance_and_a_stable_code() {
+        let message = crate::folders::PHOTOS_LIBRARY_ERROR;
+        let (chinese, chinese_code) = error_message(message, false);
+        let (english, english_code) = error_message(message, true);
+        assert_eq!(chinese, message);
+        assert_eq!(chinese_code, "photos_library_unsupported");
+        assert_eq!(english_code, chinese_code);
+        assert_eq!(
+            english,
+            "Apple Photos libraries cannot be imported as ordinary image folders. Export your photos as JPEG, PNG, or TIFF from Photos, then add the exported folder."
+        );
+    }
     #[test]
     fn language_negotiation_respects_quality_order_and_fallback() {
         for (language, english) in [

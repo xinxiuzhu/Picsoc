@@ -62,6 +62,8 @@
 
 `scan.state` 为 `idle`、`scanning` 或 `error`。`total` 在遍历过程中为 `null`。扫描状态描述目录遍历进度，缩略图任务可能稍后完成。取消扫描后回到 `idle`。
 
+扫描自动跳过嵌套的 Apple Photos `.photoslibrary` 图库包。`POST /api/libraries` 和目录浏览接口不能直接使用图库包及其内部目录，会返回 `400`、错误码 `photos_library_unsupported` 及按请求语言提供的导出说明；请先从 Photos 导出到普通图片文件夹。旧版本已索引的包内记录和注释会保留，普通目录读取失败仍使扫描报错且不清理旧索引。
+
 `Asset` 包含：
 
 ```json

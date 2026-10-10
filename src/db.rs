@@ -386,6 +386,17 @@ impl Db {
         })
     }
 
+    pub fn retain_subtree(&self, library_id: i64, generation: i64, folder: &str) -> Result<()> {
+        let (lower, upper) = folders::subtree_bounds(folder);
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE assets SET seen_generation=?2 WHERE library_id=?1 AND relative_path>=?3 AND relative_path<?4",
+                params![library_id, generation, lower, upper],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn remove_unseen_batch(&self, library_id: i64, generation: i64) -> Result<Vec<String>> {
         self.with(|conn| {
             let tx = conn.transaction()?;
@@ -809,5 +820,45 @@ mod tests {
                 .filter(|f| f.name != "folder0999")
                 .all(|folder| folder.asset_count == 1)
         );
+    }
+
+    #[test]
+    fn retained_subtree_uses_exact_native_prefix_and_preserves_annotations() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.sqlite")).unwrap();
+        let library = db.add_library("素材", "library-one").unwrap();
+        let other_library = db.add_library("其他素材", "library-two").unwrap();
+        let package = "中文.PHOTOSLIBRARY";
+        let paths = [
+            Path::new(package).join("保留.png"),
+            Path::new(package).join("originals").join("深层.png"),
+            Path::new("中文.photoslibrary").join("不同大小写.png"),
+            Path::new("中文.PHOTOSLIBRARY.backup").join("不同目录.png"),
+            Path::new(package).to_path_buf(),
+        ];
+        let records = paths
+            .iter()
+            .map(|path| record(path.to_str().unwrap(), 100, 1))
+            .collect::<Vec<_>>();
+        let indexed = db.index_batch(library.id, 1, &records).unwrap();
+        let other = db.index_batch(other_library.id, 1, &records[..1]).unwrap();
+        db.patch_asset(
+            indexed[0].0.id,
+            &AssetPatch {
+                favorite: Some(true),
+                tags: Some(vec!["原有标签".into()]),
+            },
+        )
+        .unwrap();
+        db.retain_subtree(library.id, 2, package).unwrap();
+        assert_eq!(db.remove_unseen_batch(library.id, 2).unwrap().len(), 3);
+        let retained = db.asset(indexed[0].0.id).unwrap();
+        assert!(retained.favorite);
+        assert_eq!(retained.tags, vec!["原有标签"]);
+        assert!(db.asset(indexed[1].0.id).is_ok());
+        for asset in &indexed[2..] {
+            assert!(db.asset(asset.0.id).is_err());
+        }
+        assert!(db.asset(other[0].0.id).is_ok());
     }
 }

@@ -23,7 +23,8 @@
       "namePlaceholder": "For example, Design references or Favorites",
       "readonly": "Original images stay in their folder. Adding a library does not move or modify them.",
       "adding": "Adding…",
-      "add": "Add library"
+      "add": "Add library",
+      "photosHint": "Apple Photos libraries are skipped automatically. Export your photos as JPEG, PNG, or TIFF from Photos, then add the exported folder."
     },
     "directory": {
       "eyebrow": "ADD EXISTING IMAGES",

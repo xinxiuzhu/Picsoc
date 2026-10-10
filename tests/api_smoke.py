@@ -224,6 +224,49 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(response.exception.code, 400)
         response.exception.close()
 
+    def test_photos_library_packages_are_skipped_and_exports_remain_importable(self):
+        package = self.library / 'Photos Library.PHOTOSLIBRARY'
+        originals = package / 'originals'
+        originals.mkdir(parents=True)
+        write_png(package / 'private.png')
+        write_png(originals / 'private-original.png')
+        exported = self.root / '照片导出'
+        exported.mkdir()
+        write_png(exported / '已导出的照片.png')
+
+        picker = self.request('/api/directories?path=' + urllib.parse.quote(str(self.library)))
+        self.assertEqual([item['name'] for item in picker['directories']], ['子文件夹'])
+        library = self.request('/api/libraries', 'POST', {'name': '普通图片目录', 'path': str(self.library)})
+        assets = self.wait_scan(library['id'], 3)
+        self.assertEqual({item['relative_path'].replace('\\', '/') for item in assets},
+                         {'风景.png', '子文件夹/风景.png', '动态.gif'})
+        self.assertEqual(len(self.request('/api/libraries')['libraries']), 1)
+
+        for language, export_hint in [('zh-CN', '导出'), ('en', 'export')]:
+            for path in (package, originals):
+                for method in ('GET', 'POST'):
+                    with self.subTest(language=language, path=path.name, method=method):
+                        endpoint = '/api/directories?path=' + urllib.parse.quote(str(path)) if method == 'GET' else '/api/libraries'
+                        body = None if method == 'GET' else {'name': '不应添加', 'path': str(path)}
+                        with self.assertRaises(urllib.error.HTTPError) as response:
+                            self.request(endpoint, method, body, headers={'Accept-Language': language})
+                        self.assertEqual(response.exception.code, 400)
+                        result = json.loads(response.exception.read())
+                        response.exception.close()
+                        self.assertEqual(result['code'], 'photos_library_unsupported')
+                        self.assertIn(export_hint, result['error'].lower())
+                        self.assertEqual([item['id'] for item in self.request('/api/libraries')['libraries']], [library['id']])
+
+        export_library = self.request('/api/libraries', 'POST', {'name': '导出照片', 'path': str(exported)})
+        self.wait_scan(export_library['id'], 4)
+        exported_assets = self.request('/api/assets?' + urllib.parse.urlencode({'library_id': export_library['id']}))
+        self.assertEqual(exported_assets['total'], 1)
+        self.assertEqual(exported_assets['assets'][0]['name'], '已导出的照片.png')
+        self.assertEqual(self.request(exported_assets['assets'][0]['original_url'], raw=True)[2],
+                         (exported / '已导出的照片.png').read_bytes())
+        self.assertTrue((package / 'private.png').is_file())
+        self.assertTrue((originals / 'private-original.png').is_file())
+
     def test_batch_and_indexed_subfolders(self):
         nested = self.library / '子文件夹' / '更深目录'
         nested.mkdir()

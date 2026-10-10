@@ -14,7 +14,7 @@ use walkdir::WalkDir;
 
 use crate::{
     db::{Db, FileRecord},
-    media,
+    folders, media,
     models::{Asset, ScanStatus},
 };
 
@@ -196,6 +196,9 @@ impl Scanner {
         }
         let library = self.db.library(id)?;
         let root = PathBuf::from(&library.path);
+        if root.ancestors().any(folders::is_photos_library) {
+            bail!(folders::PHOTOS_LIBRARY_ERROR);
+        }
         if root.canonicalize().context("素材目录不可访问")? != root {
             bail!("素材目录已改变，请重新添加");
         }
@@ -203,12 +206,11 @@ impl Scanner {
         let mut records = Vec::with_capacity(100);
         let mut traversal_error = None;
         let data_dir = self.data_dir.clone();
-        let entries = WalkDir::new(&root)
+        let mut entries = WalkDir::new(&root)
             .follow_links(false)
             .max_open(8)
-            .into_iter()
-            .filter_entry(|entry| entry.path() != data_dir);
-        for entry in entries {
+            .into_iter();
+        while let Some(entry) = entries.next() {
             if self.cancelled(id) {
                 return Ok(());
             }
@@ -219,6 +221,25 @@ impl Scanner {
                     continue;
                 }
             };
+            if entry.file_type().is_dir() {
+                if entry.path() == data_dir {
+                    entries.skip_current_dir();
+                    continue;
+                }
+                if entry.depth() > 0 && folders::is_photos_library(entry.path()) {
+                    entries.skip_current_dir();
+                    // An excluded package is not a deleted folder. Keep annotations from
+                    // older versions without reading any of its descendants.
+                    let Some(relative) = entry.path().strip_prefix(&root)?.to_str() else {
+                        traversal_error = Some("文件名无法转换为 Unicode".into());
+                        continue;
+                    };
+                    if let Err(error) = self.db.retain_subtree(id, generation, relative) {
+                        traversal_error = Some(error.to_string());
+                    }
+                    continue;
+                }
+            }
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -331,7 +352,7 @@ mod tests {
     use crate::models::{AssetPatch, AssetQuery};
     use std::time::Duration;
 
-    async fn wait_scan(scanner: &Scanner, id: i64) {
+    async fn scan_status(scanner: &Scanner, id: i64) -> ScanStatus {
         tokio::time::timeout(Duration::from_secs(10), async {
             while scanner.status(id).state == "scanning" {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -339,7 +360,225 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(scanner.status(id).state, "idle", "{:?}", scanner.status(id));
+        scanner.status(id)
+    }
+
+    async fn wait_scan(scanner: &Scanner, id: i64) {
+        let status = scan_status(scanner, id).await;
+        assert_eq!(status.state, "idle", "{status:?}");
+    }
+
+    fn fixture(name: &str) -> (tempfile::TempDir, PathBuf, Db, i64, Scanner) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join(name);
+        let data = temp.path().join("data");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        let root = root.canonicalize().unwrap();
+        let data = data.canonicalize().unwrap();
+        let db = Db::open(&data.join("test.sqlite")).unwrap();
+        let id = db.add_library("素材", root.to_str().unwrap()).unwrap().id;
+        let scanner = Scanner::new(db.clone(), data, 1);
+        (temp, root, db, id, scanner)
+    }
+
+    fn write_png(path: &Path) {
+        image::RgbaImage::from_pixel(8, 6, image::Rgba([12, 24, 48, 255]))
+            .save(path)
+            .unwrap();
+    }
+
+    fn old_record(path: &Path) -> FileRecord {
+        FileRecord {
+            relative_path: path.to_str().unwrap().to_owned(),
+            name: path.file_name().unwrap().to_str().unwrap().to_owned(),
+            format: "png".into(),
+            size: 1,
+            modified_at: 1,
+            mtime_ns: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn skips_nested_photos_packages_without_skipping_similar_directories() {
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        write_png(&root.join("普通.png"));
+        for name in ["旅行.photoslibrary", "中文.PHOTOSLIBRARY", ".photoslibrary"] {
+            let package = root.join(name).join("originals");
+            std::fs::create_dir_all(&package).unwrap();
+            write_png(&package.join("不导入.png"));
+        }
+        let ordinary = root.join("旅行.photoslibrary.backup");
+        std::fs::create_dir(&ordinary).unwrap();
+        write_png(&ordinary.join("导入.png"));
+        std::fs::write(root.join("普通文件.photoslibrary"), b"not a directory").unwrap();
+        scanner.start(id);
+        wait_scan(&scanner, id).await;
+        let assets = db.assets(&AssetQuery::default()).unwrap().assets;
+        assert_eq!(assets.len(), 2);
+        assert!(assets.iter().any(|a| a.name == "普通.png"));
+        assert!(assets.iter().any(|a| a.name == "导入.png"));
+        assert_eq!(scanner.status(id).processed, 2);
+    }
+
+    #[tokio::test]
+    async fn skipped_package_retains_annotations_but_deleted_ordinary_assets_are_pruned() {
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        let package = root.join("中文.PHOTOSLIBRARY");
+        std::fs::create_dir(&package).unwrap();
+        write_png(&package.join("包内.png"));
+        write_png(&root.join("普通.png"));
+        let legacy = db
+            .index_batch(
+                id,
+                0,
+                &[
+                    old_record(&Path::new("中文.PHOTOSLIBRARY").join("包内.png")),
+                    old_record(Path::new("已删除.png")),
+                    old_record(Path::new("普通文件.photoslibrary")),
+                    old_record(&Path::new("普通文件.photoslibrary").join("旧包内.png")),
+                ],
+            )
+            .unwrap();
+        let package_asset = &legacy[0].0;
+        let deleted_id = legacy[1].0.id;
+        let file_id = legacy[2].0.id;
+        let former_package_id = legacy[3].0.id;
+        // Replacing an old package directory with a regular file must not retain its subtree.
+        std::fs::write(root.join("普通文件.photoslibrary"), b"ordinary file").unwrap();
+        db.patch_asset(
+            package_asset.id,
+            &AssetPatch {
+                favorite: Some(true),
+                tags: Some(vec!["保留标签".into()]),
+            },
+        )
+        .unwrap();
+        scanner.start(id);
+        wait_scan(&scanner, id).await;
+        let retained = db.asset(package_asset.id).unwrap();
+        assert!(retained.favorite);
+        assert_eq!(retained.tags, vec!["保留标签"]);
+        assert_eq!(
+            retained.size, 1,
+            "excluded package metadata must not be read"
+        );
+        assert!(db.asset(deleted_id).is_err());
+        assert!(db.asset(file_id).is_err());
+        assert!(db.asset(former_package_id).is_err());
+        assert_eq!(db.stats().unwrap().total_assets, 2);
+        assert!(package.join("包内.png").exists());
+    }
+
+    #[tokio::test]
+    async fn photos_package_roots_and_inner_roots_fail_without_pruning() {
+        let (_temp, root, db, id, scanner) = fixture("中文.photoslibrary");
+        let legacy = db
+            .index_batch(id, 0, &[old_record(Path::new("旧图片.png"))])
+            .unwrap();
+        scanner.start(id);
+        let status = scan_status(&scanner, id).await;
+        assert_eq!(status.state, "error");
+        assert_eq!(status.error.as_deref(), Some(folders::PHOTOS_LIBRARY_ERROR));
+        assert!(db.asset(legacy[0].0.id).is_ok());
+
+        let inner = root.join("originals");
+        std::fs::create_dir(&inner).unwrap();
+        let inner_id = db
+            .add_library("包内目录", inner.to_str().unwrap())
+            .unwrap()
+            .id;
+        scanner.start(inner_id);
+        let status = scan_status(&scanner, inner_id).await;
+        assert_eq!(status.state, "error");
+        assert_eq!(status.error.as_deref(), Some(folders::PHOTOS_LIBRARY_ERROR));
+    }
+
+    #[tokio::test]
+    async fn package_retention_database_failure_prevents_pruning() {
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        std::fs::create_dir(root.join("旧.photoslibrary")).unwrap();
+        write_png(&root.join("新图片.png"));
+        let legacy = db
+            .index_batch(
+                id,
+                0,
+                &[
+                    old_record(&Path::new("旧.photoslibrary").join("legacy.png")),
+                    old_record(Path::new("已删除.png")),
+                ],
+            )
+            .unwrap();
+        let connection =
+            rusqlite::Connection::open(root.parent().unwrap().join("data/test.sqlite")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_retention BEFORE UPDATE OF seen_generation ON assets
+                 WHEN OLD.name='legacy.png'
+                 BEGIN SELECT RAISE(ABORT,'retention blocked'); END;",
+            )
+            .unwrap();
+        scanner.start(id);
+        let status = scan_status(&scanner, id).await;
+        assert_eq!(status.state, "error");
+        assert!(status.error.unwrap().contains("retention blocked"));
+        assert!(db.asset(legacy[0].0.id).is_ok());
+        assert!(db.asset(legacy[1].0.id).is_ok());
+        assert_eq!(db.stats().unwrap().total_assets, 3);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_nested_photos_package_does_not_fail_the_scan() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        write_png(&root.join("可读.png"));
+        let package = root.join("Photos Library.photoslibrary");
+        std::fs::create_dir(&package).unwrap();
+        write_png(&package.join("跳过.png"));
+        let permissions = std::fs::metadata(&package).unwrap().permissions();
+        std::fs::set_permissions(&package, std::fs::Permissions::from_mode(0o0)).unwrap();
+        scanner.start(id);
+        let status = scan_status(&scanner, id).await;
+        std::fs::set_permissions(&package, permissions).unwrap();
+        assert_eq!(status.state, "idle", "{status:?}");
+        assert_eq!(db.stats().unwrap().total_assets, 1);
+        assert_eq!(status.processed, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ordinary_permission_error_keeps_previous_index() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_temp, root, db, id, scanner) = fixture("素材");
+        write_png(&root.join("可读.png"));
+        let locked = root.join("不可读目录");
+        std::fs::create_dir(&locked).unwrap();
+        write_png(&locked.join("不可读.png"));
+        let legacy = db
+            .index_batch(id, 0, &[old_record(Path::new("已删除.png"))])
+            .unwrap();
+        let permissions = std::fs::metadata(&locked).unwrap().permissions();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o0)).unwrap();
+        // Root can bypass mode bits; only exercise the permission regression when denied.
+        if std::fs::read_dir(&locked).is_ok() {
+            std::fs::set_permissions(&locked, permissions).unwrap();
+            return;
+        }
+        scanner.start(id);
+        let status = scan_status(&scanner, id).await;
+        std::fs::set_permissions(&locked, permissions).unwrap();
+        assert_eq!(status.state, "error");
+        assert!(
+            status
+                .error
+                .unwrap()
+                .starts_with("扫描未完成，保留原有索引：")
+        );
+        assert!(db.asset(legacy[0].0.id).is_ok());
+        assert_eq!(db.stats().unwrap().total_assets, 2);
     }
 
     #[tokio::test]

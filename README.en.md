@@ -52,6 +52,8 @@ The default address is [http://127.0.0.1:3210](http://127.0.0.1:3210). The nativ
 
 Click **Add library** and select a folder containing your images, or enter an absolute path such as `D:\Pictures`, `/Users/your-name/Pictures`, or `/home/your-name/Pictures`. The picker shows folders on the computer running the service. If you connect remotely, these are server folders, not folders on the device running your browser.
 
+Apple Photos `.photoslibrary` packages are skipped, so you can add a `Pictures` folder containing one. To manage images from Photos, export them as JPEG, PNG, or TIFF into an ordinary folder and add that folder. The package itself and its internal folders cannot be added as libraries. See [Apple's export guide](https://support.apple.com/guide/photos/pht6e157c5f/mac).
+
 After scanning, browse a library's indexed subfolders and combine filters. Subfolder filtering includes descendants; empty folders are not listed. Batch actions add/remove tags and change favorites without changing original files. One batch supports up to 500 selected images; it succeeds fully or makes no metadata changes.
 
 ## Native packages

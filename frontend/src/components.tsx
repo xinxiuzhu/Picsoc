@@ -107,6 +107,7 @@ export function AddLibraryDialog({ onClose, onAdded }: {
       <label className="field-label" htmlFor="library-name">{t('components.addLibrary.name')} <span>{t('components.common.optional')}</span></label>
       <input id="library-name" className="text-input" value={name} onChange={event => setName(event.target.value)} autoComplete="off" maxLength={100} placeholder={t('components.addLibrary.namePlaceholder')} disabled={pending} />
       <p className="quiet-note">{t('components.addLibrary.readonly')}</p>
+      <p className="quiet-note">{t('components.addLibrary.photosHint')}</p>
       {error && <div className="inline-error" role="alert">{error}</div>}
       <div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose} disabled={pending}>{t('components.common.cancel')}</button><button className="button primary" disabled={pending || !path.trim()}>{pending ? <LoaderCircle size={16} className="spin" /> : <Plus size={16} />}{t(pending ? 'components.addLibrary.adding' : 'components.addLibrary.add')}</button></div>
     </form>

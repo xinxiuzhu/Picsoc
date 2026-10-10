@@ -23,7 +23,8 @@
       "namePlaceholder": "例如：设计参考、日常收藏",
       "readonly": "原图保留在文件夹中，添加素材库不会移动或修改文件。",
       "adding": "正在添加…",
-      "add": "添加素材库"
+      "add": "添加素材库",
+      "photosHint": "Apple Photos 图库会自动跳过。请先在「照片」中导出为 JPEG、PNG 或 TIFF，再添加导出文件夹。"
     },
     "directory": {
       "eyebrow": "添加已有素材",

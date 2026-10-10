@@ -2,6 +2,9 @@
 
 ## 未发布 / Unreleased
 
+- 修复新克隆仓库直接 `cargo run` 时缺少 `frontend/dist` 的编译失败；Cargo 自动构建并嵌入网页，源文件变化自动重建，并保留 Docker/发行的预构建模式。
+- Add automatic frontend builds to Cargo, including fresh-checkout regression checks and explicit prebuilt frontend support for Docker and release jobs.
+
 - 重设计 Web 界面：macOS 风格浅色侧栏、蓝色操作按钮、集中搜索、完整图片网格、文件夹导入面板与大图预览，适配窄屏并保留中英文。
 - 支持 `⌘K` / `Ctrl+K` / `/` 聚焦搜索，改善弹窗键盘焦点与移动端预览关闭入口。
 - Redesign the Web UI with a macOS-inspired sidebar, streamlined search and import, image-first browsing, responsive previews, and keyboard shortcuts in Chinese and English.

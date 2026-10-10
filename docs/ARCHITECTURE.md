@@ -4,7 +4,7 @@
 
 ## 运行结构
 
-Picsoc 是一个 Rust 服务进程：Axum 同时提供 HTTP API、原图和嵌入的网页；React 前端由 Vite 构建为 `frontend/dist`，再通过 `rust-embed` 编入程序。正式运行不需要 Node.js 或第二个前端端口。启动入口及 CLI 配置在 [main.rs](../src/main.rs)，路由和中间件在 [api.rs](../src/api.rs)。
+Picsoc 是一个 Rust 服务进程：Axum 同时提供 HTTP API、原图和嵌入的网页；React 前端由 Vite 构建为 `frontend/dist`，再通过 `rust-embed` 编入程序。Cargo 的 `build.rs` 在网页缺失或输入变化时自动调用 npm 构建，未变化时复用结果；Docker/发行构建用 `PICSOC_FRONTEND_PREBUILT=1` 使用已构建网页。正式运行不需要 Node.js 或第二个前端端口。启动入口及 CLI 配置在 [main.rs](../src/main.rs)，路由和中间件在 [api.rs](../src/api.rs)。
 
 ```mermaid
 flowchart LR

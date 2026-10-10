@@ -10,9 +10,10 @@ RUN npm run build
 FROM rust:${RUST_VERSION}-bookworm AS backend
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src/ ./src/
 COPY --from=frontend /build/frontend/dist/ ./frontend/dist/
-RUN cargo build --locked --release
+RUN PICSOC_FRONTEND_PREBUILT=1 cargo build --locked --release
 
 # Export the Debian 12-built executable for the Linux release archive.
 FROM scratch AS binary

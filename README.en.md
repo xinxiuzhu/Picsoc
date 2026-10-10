@@ -24,15 +24,17 @@ The stack is Rust, Axum, Tokio, bundled SQLite, React, TypeScript, and Vite. Ima
 
 ## Start from source
 
-Use Rust 1.96.1 and Node.js 22, matching CI. From the repository root, build the frontend first, then compile and start the Rust service through Cargo:
+Install Rust (minimum 1.88), Node.js (18, 20, or 22+) and npm; Rust 1.96.1 and Node.js 22 match CI. Cargo automatically installs locked frontend dependencies and builds the embedded Web UI, including from a fresh clone without `frontend/dist`. From the repository root:
 
 ```sh
-npm --prefix frontend ci
-npm --prefix frontend run build
 cargo run --locked --release
 ```
 
-The same commands work in Windows PowerShell. Frontend files are embedded in the Rust executable, so no separate frontend service is needed. Build the frontend on first use and after frontend changes; subsequent starts only need `cargo run --locked --release`.
+The same command works in Windows PowerShell. The first build downloads npm dependencies; source, configuration and lockfile changes trigger a rebuild. Unchanged builds reuse the frontend. The resulting executable needs neither Node.js nor a separate frontend service.
+
+On Debian, install missing tools with `sudo apt update` and `sudo apt install nodejs npm` (omit `sudo` as root), then check `node --version`. Use `-- --no-open` on a headless server.
+
+Docker and release builders can set `PICSOC_FRONTEND_PREBUILT=1` after running `npm --prefix frontend ci` and `npm --prefix frontend run build`. This mode still requires a complete `frontend/dist`; it fails clearly when the Web UI is missing.
 
 `cargo run` uses a debug build; use `--release` for everyday use and deployment. Pass service arguments after `--`:
 
@@ -169,7 +171,7 @@ For upgrades, keep the previous program and a full pre-upgrade data backup. Rest
 - [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
-Build the frontend before Rust. `npm run build` includes the locale-key checker and TypeScript checks. Rust validation uses `cargo fmt --all --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`. The API smoke test starts an isolated service: `python3 tests/api_smoke.py --binary target/debug/picsoc` (Windows: `python` and `picsoc.exe`).
+Cargo builds the frontend before embedding it in Rust. `npm run build` includes the locale-key checker and TypeScript checks. Rust validation uses `cargo fmt --all --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`. The API smoke test starts an isolated service: `python3 tests/api_smoke.py --binary target/debug/picsoc` (Windows: `python` and `picsoc.exe`).
 
 Dependency versions are locked in `Cargo.lock` and `frontend/package-lock.json`.
 

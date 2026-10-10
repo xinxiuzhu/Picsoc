@@ -2,7 +2,7 @@
 
 ## 自动检查
 
-`.github/workflows/ci.yml` 配置在 `main` push、pull request 或手动触发时运行，构建目标为 Windows x64、macOS Intel、macOS Apple Silicon 和 Debian 12。前端先执行 `npm ci` 与 `npm run build`，随后进行 Rust 格式、Clippy、测试、release 构建、版本命令以及 `tests/api_smoke.py` 的实际服务测试。端到端脚本自行启动临时端口上的服务，不需要已有实例。
+`.github/workflows/ci.yml` 配置在 `main` push、pull request 或手动触发时运行，构建目标为 Windows x64、macOS Intel、macOS Apple Silicon 和 Debian 12。`tests/frontend_build_smoke.py` 先在不含 dist/node_modules 的临时源码目录验证 Cargo 自动安装依赖、构建网页、缓存与重建，并检查真实 HTTP 首页；随后进行 Rust 格式、Clippy、测试、release 构建、版本命令以及 `tests/api_smoke.py` 的实际服务测试。端到端脚本自行启动临时端口上的服务，不需要已有实例。
 
 Debian 的 Rust 检查和编译在 `rust:1.96.1-bookworm` 容器中完成。Docker job 还构建运行镜像，确认默认用户为 `10001:10001`，启动容器检查 `/api/health` 与嵌入的中文 Web 首页。普通 CI 不上传发行包、发布镜像或部署服务。
 

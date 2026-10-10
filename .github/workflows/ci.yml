@@ -41,15 +41,13 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Build Web frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
       - name: Install Rust
         run: |
           rustup toolchain install ${{ env.RUST_VERSION }} --profile minimal --component rustfmt --component clippy
           rustup default ${{ env.RUST_VERSION }}
+      - name: Verify Cargo builds Web from a clean checkout
+        shell: bash
+        run: python tests/frontend_build_smoke.py
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Lint Rust
@@ -95,11 +93,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Build Web frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+      - name: Verify Cargo builds Web from a clean checkout
+        run: python3 tests/frontend_build_smoke.py
       - name: Install Rust checks
         run: rustup component add rustfmt clippy
       - run: cargo fmt --all --check

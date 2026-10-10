@@ -16,7 +16,7 @@ Picsoc 是一个在自己电脑或服务器上运行的图片素材库。启动 
 - 后台扫描生成缩略图；支持取消扫描、手动重扫以及默认每 300 秒的增量扫描。
 - 配置 Windows 和 macOS 原生程序、Debian 原生程序与 Docker 的构建及发布流程。
 
-技术栈：Rust、Axum、Tokio、SQLite、React、TypeScript、Vite。SQLite 随程序构建，图片处理使用 Rust `image`，第一版不需要另外安装 Node.js、SQLite 或 libvips。Node.js 只在编译前端时使用。
+技术栈：Rust、Axum、Tokio、SQLite、React、TypeScript、Vite。SQLite 随程序构建，图片处理使用 Rust `image`，发行程序运行时不需要另外安装 Node.js、SQLite 或 libvips。从源码构建需要 Node.js 和 npm，用于编译前端。
 
 ## Windows / macOS / Debian 快速开始
 
@@ -149,15 +149,17 @@ picsoc --bind 127.0.0.1:3210 --data-dir ./picsoc-data --workers 1
 
 ## 从源码开发
 
-CI 使用 Rust 1.96.1、Node.js 22 和 npm。在仓库根目录执行下面的命令，先构建前端，再通过 Cargo 编译并启动 Rust 服务：
+需要 Rust（最低 1.88）、Node.js（18、20 或 22+）和 npm；推荐与 CI 一样使用 Rust 1.96.1、Node.js 22。新克隆的仓库不包含 `frontend/dist`，Cargo 会自动安装锁定的前端依赖、构建网页，再把网页嵌入 Rust 程序。在仓库根目录执行：
 
 ```sh
-npm --prefix frontend ci
-npm --prefix frontend run build
 cargo run --locked --release
 ```
 
-Windows PowerShell 可以使用同样的命令。前端文件会嵌入 Rust 程序，不需要单独启动前端服务。首次运行或前端更新后需要重新构建前端；之后直接运行 `cargo run --locked --release` 即可。
+Windows PowerShell 可以使用同样的命令。首次构建会访问 npm 仓库；网页源码、配置或 lockfile 变化后自动重建，未变化时复用构建结果。最终程序不需要 Node.js 或单独的前端服务。
+
+Debian 尚未安装 Node.js/npm 时，可以使用 `sudo apt update` 和 `sudo apt install nodejs npm`（root 用户省略 `sudo`），再用 `node --version` 确认版本满足上述要求。无桌面环境的服务器可用 `cargo run --locked --release -- --no-open`；局域网访问参数见上一节。
+
+Docker 和发行构建可以显式使用已构建网页：先运行 `npm --prefix frontend ci` 与 `npm --prefix frontend run build`，再设置构建环境变量 `PICSOC_FRONTEND_PREBUILT=1`。此模式仍检查 `frontend/dist`，缺失时明确报错，不会生成没有界面的程序。
 
 `cargo run` 使用调试构建，日常使用和部署建议加上 `--release`。默认打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)，按 `Ctrl+C` 停止服务。
 

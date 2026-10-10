@@ -6,13 +6,9 @@
 
 使用 Rust 1.96.1、Node.js 22、npm 和 Python 3.12，与 CI 保持一致。不需要另外安装 SQLite 或 libvips。
 
-先构建前端，Rust 才能嵌入它：
+Cargo 会自动构建前端并嵌入 Rust 程序：
 
 ```sh
-cd frontend
-npm ci
-npm run build
-cd ..
 cargo run --locked -- --no-open --data-dir ./picsoc-data
 ```
 
@@ -31,7 +27,7 @@ cargo build --locked
 python3 tests/api_smoke.py --binary target/debug/picsoc
 ```
 
-API smoke 测试自行启动真实服务，使用临时端口和临时素材目录；它不需要已有服务或个人图片。新增 API 行为应补充对应测试和 [API 文档](docs/API.md)。数据与扫描设计见 [架构说明](docs/ARCHITECTURE.md)。提交前查看 `git diff --check`。
+新克隆的自动构建回归可运行 `python3 tests/frontend_build_smoke.py`，它使用不含 dist/node_modules 的临时源码目录。API smoke 测试自行启动真实服务，使用临时端口和临时素材目录；它不需要已有服务或个人图片。新增 API 行为应补充对应测试和 [API 文档](docs/API.md)。数据与扫描设计见 [架构说明](docs/ARCHITECTURE.md)。提交前查看 `git diff --check`。
 
 ## 文案与界面
 
@@ -47,7 +43,7 @@ PR 说明应写清问题、最终行为和实际验证结果。仅在相关工�
 
 ## English
 
-Use Rust 1.96.1, Node.js 22, npm, and Python 3.12, matching CI. Build the frontend before compiling Rust, because its assets are embedded in the executable. The commands above run formatting, Clippy, Rust tests, a frontend production build, and the API smoke test against temporary files. On Windows, use `python` and `target/debug/picsoc.exe`.
+Use Rust 1.96.1, Node.js 22, npm, and Python 3.12, matching CI. Cargo automatically builds and embeds the frontend; `python3 tests/frontend_build_smoke.py` verifies this from a temporary fresh checkout. The commands above run formatting, Clippy, Rust tests, a frontend production build, and the API smoke test against temporary files. On Windows, use `python` and `target/debug/picsoc.exe`.
 
 For frontend development, run the Rust service on port 3210 and `npm run dev` in a second terminal. The development proxy forwards API requests to that service.
 

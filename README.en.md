@@ -24,19 +24,29 @@ The stack is Rust, Axum, Tokio, bundled SQLite, React, TypeScript, and Vite. Ima
 
 ## Start from source
 
-Use Rust 1.96.1 and Node.js 22, matching CI:
+Use Rust 1.96.1 and Node.js 22, matching CI. From the repository root, build the frontend first, then compile and start the Rust service through Cargo:
 
 ```sh
-./scripts/build.sh
-./scripts/start.sh
+npm --prefix frontend ci
+npm --prefix frontend run build
+cargo run --locked --release
 ```
 
-Windows PowerShell:
+The same commands work in Windows PowerShell. Frontend files are embedded in the Rust executable, so no separate frontend service is needed. Build the frontend on first use and after frontend changes; subsequent starts only need `cargo run --locked --release`.
 
-```powershell
-.\scripts\build.ps1
-.\scripts\start.ps1
+`cargo run` uses a debug build; use `--release` for everyday use and deployment. Pass service arguments after `--`:
+
+```sh
+cargo run --locked --release -- --data-dir ./picsoc-data --workers 1
 ```
+
+For access from other devices on a trusted LAN:
+
+```sh
+PICSOC_PASSWORD='replace-with-your-password' cargo run --locked --release -- --bind 0.0.0.0:3210 --no-open
+```
+
+The login username is `picsoc`. The `scripts/build.sh` / `scripts/start.sh` helpers are also available, with `.ps1` equivalents on Windows.
 
 The default address is [http://127.0.0.1:3210](http://127.0.0.1:3210). The native service opens your system browser automatically. Keep the service running; closing the browser does not stop it. Press `Ctrl+C` in its terminal to stop the service.
 

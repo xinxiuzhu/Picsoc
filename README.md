@@ -147,29 +147,31 @@ picsoc --bind 127.0.0.1:3210 --data-dir ./picsoc-data --workers 1
 
 ## 从源码开发
 
-CI 使用 Rust 1.96.1、Node.js 22 和 npm。先编译前端，再编译 Rust，因为前端文件会嵌入可执行程序：
+CI 使用 Rust 1.96.1、Node.js 22 和 npm。在仓库根目录执行下面的命令，先构建前端，再通过 Cargo 编译并启动 Rust 服务：
 
 ```sh
-./scripts/build.sh
-./scripts/start.sh
+npm --prefix frontend ci
+npm --prefix frontend run build
+cargo run --locked --release
 ```
 
-Windows PowerShell：
+Windows PowerShell 可以使用同样的命令。前端文件会嵌入 Rust 程序，不需要单独启动前端服务。首次运行或前端更新后需要重新构建前端；之后直接运行 `cargo run --locked --release` 即可。
 
-```powershell
-.\scripts\build.ps1
-.\scripts\start.ps1
-```
+`cargo run` 使用调试构建，日常使用和部署建议加上 `--release`。默认打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)，按 `Ctrl+C` 停止服务。
 
-也可以手动运行：
+服务参数放在 `--` 后面，例如指定数据目录：
 
 ```sh
-cd frontend
-npm ci
-npm run build
-cd ..
-cargo run --locked
+cargo run --locked --release -- --data-dir ./picsoc-data --workers 1
 ```
+
+Debian 服务器需要局域网访问时：
+
+```sh
+PICSOC_PASSWORD='换成你自己的强密码' cargo run --locked --release -- --bind 0.0.0.0:3210 --no-open
+```
+
+登录用户名为 `picsoc`。也可以使用 `scripts/build.sh` / `scripts/start.sh`，Windows 使用对应的 `.ps1` 脚本。
 
 验证使用 `npm run build`、`cargo fmt --all --check`、`cargo clippy --locked --all-targets -- -D warnings` 和 `cargo test --locked`。`Cargo.lock` 与 `frontend/package-lock.json` 固定依赖版本。API 定义见 [docs/API.md](docs/API.md)，发布流程见 [docs/RELEASING.md](docs/RELEASING.md)。
 

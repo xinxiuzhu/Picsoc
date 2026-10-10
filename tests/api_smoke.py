@@ -2,6 +2,7 @@
 """Run the real Picsoc service against temporary files, without extra dependencies."""
 import argparse
 import base64
+from contextlib import closing
 import http.cookiejar
 import json
 import os
@@ -576,7 +577,9 @@ class SmokeTest(unittest.TestCase):
                 native = str(Path(*parts[:depth]))
                 parent = str(Path(*parts[:depth - 1])) if depth > 1 else ''
                 rows.append((library_id, native, parent, parts[depth - 1], 0))
-        with sqlite3.connect(self.root / 'data' / 'picsoc.sqlite3', timeout=10) as connection:
+        # SQLite's transaction context does not close the connection. Close it
+        # explicitly so Windows can remove the temporary database in tearDown.
+        with closing(sqlite3.connect(self.root / 'data' / 'picsoc.sqlite3', timeout=10)) as connection, connection:
             connection.executemany(
                 'INSERT OR IGNORE INTO library_folders(library_id,relative_path,parent,name,seen_generation) '
                 'VALUES(?,?,?,?,?)', rows)

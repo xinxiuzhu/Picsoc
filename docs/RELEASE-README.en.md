@@ -16,7 +16,7 @@ macOS / Debian: open a terminal in the extracted directory:
 ./picsoc
 ```
 
-The first startup generates `config.toml` in the data directory and prints its path. Press `Ctrl+C`, edit it, and start again. Existing files are retained; invalid configuration prevents startup. Open http://127.0.0.1:3210 if the browser does not open automatically. Keep the service running; `Ctrl+C` stops it. Closing the browser leaves the service available. Choose a language in the page header, add a folder on the machine running Picsoc, and wait for background scanning.
+The first startup generates `./config.toml` in the launch working directory and prints its path. Run the executable from its extracted directory. `--data-dir` changes data storage, not the default configuration location. Press `Ctrl+C`, edit it, and start again. Existing files are retained; invalid configuration prevents startup. Without explicit `--config`, an absent working-directory file can be generated from an older configuration in the initial data directory, preserving effective settings, the data path and the old file. Existing working-directory files are never overwritten; explicit `--config` does not trigger migration. Open http://127.0.0.1:3210 if the browser does not open automatically. Keep the service running; `Ctrl+C` stops it. Closing the browser leaves the service available. Choose a language in the page header, add a folder on the machine running Picsoc, and wait for background scanning.
 
 Linux uses Debian 12 as its build baseline. Other systems need target-machine verification. Intel and Apple Silicon Macs use separate packages. macOS packages are currently unsigned and not notarized.
 
@@ -28,7 +28,7 @@ JPEG, PNG, GIF, WebP, BMP, and TIFF are supported. Originals stay in place and a
 
 Indexes, favorites, tags, and thumbnails persist in the data directory. Default paths are `%LOCALAPPDATA%\Picsoc` on Windows, `~/Library/Application Support/Picsoc` on macOS, and `$XDG_DATA_HOME/picsoc` or `~/.local/share/picsoc` on Linux. The service prints the actual path; `--data-dir PATH` overrides it.
 
-Stop the service before backing up the entire data directory. Back up originals separately. Keep library paths unchanged when restoring. Removing a library deletes its metadata and cached thumbnails, while leaving originals intact.
+Stop the service before backing up the entire data directory and the separate working-directory `config.toml`. Back up originals separately. Keep library paths unchanged when restoring. Removing a library deletes its metadata and cached thumbnails, while leaving originals intact.
 
 ## Options and remote access
 

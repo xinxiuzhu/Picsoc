@@ -219,9 +219,9 @@ def main():
         for variable in ['PICSOC_PASSWORD', 'PICSOC_BIND', 'PICSOC_DATA_DIR']:
             environment.pop(variable, None)
         with (root / 'service.log').open('w+', encoding='utf-8') as log:
-            process = subprocess.Popen([binary, '--bind', f'127.0.0.1:{port}', '--data-dir', str(root / 'data'),
+            process = subprocess.Popen([binary, '--config', str(root / 'config.toml'), '--bind', f'127.0.0.1:{port}', '--data-dir', str(root / 'data'),
                                         '--workers', '1', '--scan-interval', '0', '--no-open'],
-                                       env=environment, stdout=log, stderr=subprocess.STDOUT)
+                                       cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT)
 
             def request(path, body=None):
                 message = urllib.request.Request(f'http://127.0.0.1:{port}{path}',

@@ -59,7 +59,7 @@ async function start(enabled = true) {
     'redirect_uris = []',
     '',
   ].join('\n'), { mode: 0o600 });
-  processHandle = spawn(binary, ['--data-dir', data], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  processHandle = spawn(binary, ['--config', path.join(data, 'config.toml')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   processHandle.stdout.on('data', bytes => { logs += bytes; }); processHandle.stderr.on('data', bytes => { logs += bytes; });
   for (let i = 0; i < 150; i++) { if (processHandle.exitCode !== null) throw new Error(`Service stopped: ${logs}`); try { const response = await fetch(`${base}/api/auth/status`); if (response.ok) return; } catch {} await wait(100); }
   throw new Error(`Service did not start: ${logs}`);

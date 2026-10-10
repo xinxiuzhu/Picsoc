@@ -83,6 +83,16 @@ impl AppConfig {
     }
 }
 
+/// Read a legacy configuration without creating or changing any files. Relative
+/// data paths remain anchored to the legacy file before writing a new template.
+pub fn load_existing(path: &Path, initial: &AppConfig) -> Result<Option<AppConfig>> {
+    match File::open(path) {
+        Ok(file) => read_config(file, path, initial).map(Some),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("无法读取配置文件 {}", path.display())),
+    }
+}
+
 /// Read an existing file without changing it, or create a complete annotated
 /// template exactly once. CLI overrides are applied by the caller after loading.
 pub fn load_or_create(path: &Path, initial: &AppConfig) -> Result<LoadedConfig> {

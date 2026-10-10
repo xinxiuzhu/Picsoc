@@ -4,11 +4,11 @@
 
 ## 数据与路径
 
-原图放在你自己的素材目录；Picsoc 数据目录保存以下文件。Docker 示例中原图与数据分别是 `/library` 和 `/data`，对应 `compose.yaml` 的素材与数据挂载 `source`。应用配置为数据目录中的 `config.toml`，宿主机默认是 `picsoc-data/config.toml`。
+原图放在你自己的素材目录；Picsoc 数据目录保存数据库、缓存和作品。原生配置默认是启动工作目录的 `./config.toml`，从项目根目录运行 Cargo 时就在项目根目录。Docker 工作目录为 `/data`，原图与数据分别挂载为 `/library` 和 `/data`，对应 `compose.yaml` 的 `source`；容器配置 `/data/config.toml` 的宿主默认路径是 `picsoc-data/config.toml`。
 
 | 路径 | 内容与备份用途 |
 | --- | --- |
-| `config.toml` | 监听、数据路径、明文密码和可选 MCP 设置；首次启动生成，修改后重启 |
+| 原生 `./config.toml`；Docker `/data/config.toml` | 监听、数据路径、明文密码和可选 MCP 设置；首次启动生成，修改后重启；原生默认须单独备份 |
 | `picsoc.sqlite3` 及可能存在的 `-wal` / `-shm` | 索引、素材编号、收藏和标签；须作为同一份停机数据备份 |
 | `thumbnails/` | 已生成的缩略图缓存；保留可避免重算 |
 | `generated/designs/` | 保存的设计布局及不可变版本 |
@@ -16,7 +16,7 @@
 | `fonts/` | 用户提供的原始字体文件；复现文字样式需要相同字体，系统字体另行安装 |
 | `mcp-oauth.json` | OAuth 客户端与 access/refresh 令牌哈希；保留后未过期连接可继续使用 |
 
-原生默认路径：Windows `%LOCALAPPDATA%\Picsoc`；macOS `~/Library/Application Support/Picsoc`；Linux `$XDG_DATA_HOME/picsoc` 或 `~/.local/share/picsoc`。启动日志会显示实际目录，`--data-dir` 可选择数据目录并定位默认配置文件，`--config` 可指定独立文件。配置中的 `data_dir` 也能选择存储位置，但改路径不会迁移数据；显式 CLI 值优先。
+原生默认路径：Windows `%LOCALAPPDATA%\Picsoc`；macOS `~/Library/Application Support/Picsoc`；Linux `$XDG_DATA_HOME/picsoc` 或 `~/.local/share/picsoc`。启动日志会显示实际目录，`--data-dir` 只选择数据目录，不改变默认配置位置；`--config` 可指定其他文件。配置中的 `data_dir` 也能选择存储位置，但改路径不会迁移数据；显式 CLI 值优先。
 
 备份整个数据目录能保留收藏、标签、已有索引、设计布局与成品；不要把 `generated`、`fonts` 或授权文件排除在备份之外。原图需要单独备份；数据库和布局不能恢复已丢失的原图。记录原图的绝对路径或容器挂载位置，恢复时保持相同路径。改名或移动文件当前会被识别为删除旧素材并添加新素材，原来的收藏和标签不会自动迁移，引用旧素材编号的布局也可能无法再次合成。
 
@@ -43,14 +43,21 @@ install -m 600 compose.yaml "$picsoc_backup_dir/compose.yaml"
 docker compose start picsoc
 ```
 
-只在归档成功后重新启动。目录所有者若为 `10001`，备份账号需要对应读取权限；不要为了备份修改原图目录的权限。数据备份中的 `config.toml` 含明文密码与可选静态 MCP token，不能公开；自定义 `--config` 位于数据目录外时，也须单独以受限权限备份。保留多个时间点和一份独立设备上的副本，并定期实际恢复到隔离目录验证。
+只在归档成功后重新启动。目录所有者若为 `10001`，备份账号需要对应读取权限；不要为了备份修改原图目录的权限。Docker 数据备份包含 `config.toml`；原生默认配置在启动目录，须另外以受限权限备份。显式 `--config` 指向数据目录外时也须单独备份。配置含明文密码与可选静态 MCP token，不能公开。保留多个时间点和一份独立设备上的副本，并定期实际恢复到隔离目录验证。
 
-原生 macOS/Linux：在运行窗口按 `Ctrl+C`，确认服务退出后，使用上述 `tar` 命令备份实际数据目录。Windows 可在停止服务后用 PowerShell 复制：
+原生 macOS/Linux：在运行窗口按 `Ctrl+C`，确认服务退出后，使用上述 `tar` 命令备份实际数据目录，并从项目/启动目录备份配置：
+
+```sh
+install -m 600 ./config.toml "$picsoc_backup_dir/config.toml"
+```
+
+如使用 `--config`，替换为实际配置路径。Windows 可在停止服务后，从启动目录用 PowerShell 复制数据和配置：
 
 ```powershell
 $picsocData = Join-Path $env:LOCALAPPDATA 'Picsoc'
 $picsocBackup = Join-Path $env:USERPROFILE ('Picsoc-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 Copy-Item -LiteralPath $picsocData -Destination $picsocBackup -Recurse
+Copy-Item -LiteralPath .\config.toml -Destination (Join-Path $picsocBackup 'config.toml')
 ```
 
 自定义了 `--data-dir` 时，相应更改变量。备份文件继承备份位置的访问权限，选择仅自己能访问的位置。
@@ -59,7 +66,7 @@ Copy-Item -LiteralPath $picsocData -Destination $picsocBackup -Recurse
 
 1. 停止服务，保留现有数据目录的副本，避免覆盖唯一可用的数据。
 2. 将可信备份解压或复制到一个新的数据目录，不要与正在使用的数据混合。
-3. 检查目录中有 `picsoc.sqlite3`，按备份内容核对 `config.toml`、`thumbnails`、`generated`、`fonts` 和 `mcp-oauth.json`；确认原图目录已恢复，路径及内容正确。
+3. 检查数据目录中有 `picsoc.sqlite3`，按备份内容核对 `thumbnails`、`generated`、`fonts` 和 `mcp-oauth.json`；另将原生配置恢复到启动目录，或用 `--config` 指向恢复的文件。Docker 配置在 `/data` 内一并恢复。确认原图目录已恢复，路径及内容正确。
 4. Docker 修改 `compose.yaml` 中 `/data` 挂载的 `source` 指向新目录，确认运行 UID/GID 对数据目录有写权限、对素材目录有读取及遍历权限。原生程序用 `--data-dir 新目录` 启动，并检查配置中 `data_dir`、原图路径与当前部署一致。移动独立配置文件时，更新 `--config` 路径。
 5. 启动同版本程序，核对素材库、图片数量、收藏和标签，打开原图与 GIF；如有设计，检查历史布局、PNG 下载和字体，再恢复常规访问。
 
@@ -75,7 +82,9 @@ Copy-Item -LiteralPath $picsocData -Destination $picsocBackup -Recurse
 
 升级前记录正在运行的 commit、二进制版本或完整镜像 tag/digest，并完成停机备份。先看新版本变更记录和实际 CI 结果。当前没有通用的数据库降级或迁移回滚保证。
 
-旧环境变量部署升级到 TOML 时，先记录密码、公开 URL 与 MCP 设置。首次启动生成文件后停止，将这些值写入 `config.toml` 再启动；旧运行环境变量不会读取。自定义数据目录应继续通过 `--data-dir` 定位，或用 `--config` 选定配置。
+旧环境变量部署升级到 TOML 时，先记录密码、公开 URL 与 MCP 设置。首次启动生成文件后停止，将这些值写入 `config.toml` 再启动；旧运行环境变量不会读取。自定义数据目录可继续通过 `--data-dir` 指定，或写入 TOML 的 `data_dir`。默认配置位置仍是启动目录，`--config` 可选择其他配置文件。
+
+原生启动目录没有 `config.toml`、初始数据目录已有旧配置且未显式指定 `--config` 时，程序会读取旧配置，在启动目录生成文件并保留有效设置与数据路径；旧文件不删除。已有启动目录配置不覆盖，显式 `--config` 不触发迁移。
 
 原生运行：保留旧二进制，将新二进制放到单独目录，沿用原数据目录启动，检查版本、图片、收藏和标签，以及设计布局、下载和 MCP 授权。源码可使用 `cargo build --locked --release` 自动构建并嵌入前端，或使用 [构建脚本](../scripts/build.sh)。
 

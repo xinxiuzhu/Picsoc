@@ -22,15 +22,12 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 struct Args {
     #[arg(
         long,
-        help = "TOML 配置文件，默认位于数据目录 config.toml；不存在时自动生成"
+        help = "TOML 配置文件，默认位于启动目录 ./config.toml；不存在时自动生成"
     )]
     config: Option<PathBuf>,
     #[arg(long, help = "临时覆盖配置中的 HTTP 监听地址")]
     bind: Option<SocketAddr>,
-    #[arg(
-        long,
-        help = "数据目录及默认配置文件位置，默认使用当前用户应用数据目录"
-    )]
+    #[arg(long, help = "数据库、缩略图和作品目录，默认使用当前用户应用数据目录")]
     data_dir: Option<PathBuf>,
     #[arg(long, help = "启动后不自动打开浏览器")]
     no_open: bool,
@@ -132,16 +129,35 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
     let initial_data_dir = absolute_path(args.data_dir.clone().map_or_else(default_data_dir, Ok)?)?;
+    let legacy_config_path = initial_data_dir.join("config.toml");
     let config_path = absolute_path(
         args.config
             .clone()
-            .unwrap_or_else(|| initial_data_dir.join("config.toml")),
+            .unwrap_or_else(|| PathBuf::from("config.toml")),
     )?;
     let mut initial = config::AppConfig::defaults(initial_data_dir);
     args.apply(&mut initial);
+    let migrated_from = if args.config.is_none()
+        && legacy_config_path != config_path
+        && !config_path
+            .try_exists()
+            .with_context(|| format!("无法检查配置文件 {}", config_path.display()))?
+    {
+        if let Some(legacy) = config::load_existing(&legacy_config_path, &initial)? {
+            initial = legacy;
+            Some(legacy_config_path)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let loaded = config::load_or_create(&config_path, &initial)?;
     println!("配置文件：{}", config_path.display());
     if loaded.created {
+        if let Some(source) = migrated_from {
+            println!("已沿用旧配置：{}；旧文件保留。", source.display());
+        }
         println!("已生成 config.toml；按 Ctrl+C 停止服务，编辑配置后重新启动即可生效。");
     }
     let mut settings = loaded.config;

@@ -17,7 +17,7 @@ git pull --ff-only
 cargo run --locked --release
 ```
 
-On first startup, Picsoc generates `config.toml` in its data directory and prints the path. Press `Ctrl+C`, edit that file, keeping its generated `data_dir`, and change these fields:
+Run Cargo from the Picsoc repository root. On first startup, Picsoc generates `./config.toml` in that project directory and prints the path. Press `Ctrl+C`, edit that file, keeping its generated `data_dir`, and change these fields:
 
 ```toml
 bind = "0.0.0.0:3210"
@@ -33,7 +33,7 @@ redirect_uris = []
 
 Edit the existing fields rather than appending duplicate keys/tables. Run `cargo run --locked --release` again. Existing configuration is retained, and invalid configuration prevents startup. Runtime environment variables are no longer read; manually copy previous settings into TOML.
 
-If the old process used `--data-dir`, keep that same argument; it also locates the default configuration file. Linux uses `$XDG_DATA_HOME/picsoc` or `~/.local/share/picsoc`, including `/root/.local/share/picsoc/config.toml` for root by default. Keep the data directory to reuse your indexed library, layouts, outputs and OAuth credentials. `--config PATH` selects a different configuration file. Explicit CLI arguments override file values without rewriting an existing file.
+Keep the original data directory. `--data-dir` selects data storage without relocating the default `./config.toml` in the launch working directory. Linux data defaults to `$XDG_DATA_HOME/picsoc` or `~/.local/share/picsoc`, including `/root/.local/share/picsoc` for root. Keep the data directory to reuse your indexed library, layouts, outputs and OAuth credentials. `--config PATH` selects a different configuration file. Without this explicit flag, an absent working-directory configuration can be generated from an older file in the initial data directory, retaining effective settings and the data path; the old file remains. Existing working-directory files are never overwritten, and explicit `--config` does not trigger migration. Explicit CLI arguments override file values without rewriting an existing file.
 
 `mcp.public_url` must be an HTTPS origin without a path, query, fragment or credentials. HTTP is allowed only for loopback development, not a LAN OAuth issuer.
 

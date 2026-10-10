@@ -86,7 +86,7 @@ class SmokeTest(unittest.TestCase):
             'redirect_uris = []', '',
         ])
         (data / 'config.toml').write_text(config, encoding='utf-8')
-        self.process = subprocess.Popen([self.binary, '--bind', bind or f'127.0.0.1:{self.port}', '--data-dir', str(self.root / 'data'), '--no-open', '--workers', '1'], stdout=self.log, stderr=subprocess.STDOUT, env=environment)
+        self.process = subprocess.Popen([self.binary, '--config', str(data / 'config.toml'), '--bind', bind or f'127.0.0.1:{self.port}', '--data-dir', str(self.root / 'data'), '--no-open', '--workers', '1'], cwd=self.root, stdout=self.log, stderr=subprocess.STDOUT, env=environment)
         for _ in range(150):
             try:
                 if self.request('/api/health')['ok']:

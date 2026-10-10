@@ -46,7 +46,7 @@ Docker and release builders can set `PICSOC_FRONTEND_PREBUILT=1` after running `
 cargo run --locked --release -- --data-dir ./picsoc-data --workers 1
 ```
 
-The first startup generates `config.toml` in the data directory and prints its path. Press `Ctrl+C`, edit the file, and run `cargo run --locked --release` again. For LAN access, set `bind = "0.0.0.0:3210"`, `open_browser = false`, and a nonempty `password`. Existing configuration files are retained; invalid settings stop startup with an error.
+The first startup generates `./config.toml` in the current working directory and prints its path. Running Cargo from the Picsoc repository root puts the file in the project root. Press `Ctrl+C`, edit the file, and run `cargo run --locked --release` again. For LAN access, set `bind = "0.0.0.0:3210"`, `open_browser = false`, and a nonempty `password`. Existing configuration files are retained; invalid settings stop startup with an error.
 
 The browser shows a simple password login page; sessions last 24 hours and end on logout or service restart. Without a password, the library opens directly. Basic Auth scripts use the username `picsoc`. Startup logs show the actual listening address separately from the local browser URL. When a native service listens on `0.0.0.0`, it lists active IPv4 interfaces and their browser links, placing physical interfaces before virtual bridges and VPNs. Address detection does not need an external service and failures do not stop Picsoc. In Docker, detected addresses belong to the container; use the host IP and published port instead. The `scripts/build.sh` / `scripts/start.sh` helpers are also available, with `.ps1` equivalents on Windows.
 
@@ -134,7 +134,7 @@ See [performance and the reproducible benchmark](docs/PERFORMANCE.md). Its synth
 
 ## TOML configuration and network access
 
-The default file is `config.toml` in the data directory listed above. On Debian as root, this is `/root/.local/share/picsoc/config.toml`. Keep the generated `data_dir` value when editing other settings:
+Run `cargo run --release` from the Picsoc repository root to generate `config.toml` in that project directory. Native executables also default to `./config.toml` in the launch working directory; run release packages from their extracted directory. Startup logs print the selected file. Data storage remains in the platform-specific directory listed above, including `/root/.local/share/picsoc` for Debian root. Keep the generated `data_dir` value when editing other settings:
 
 ```toml
 bind = "0.0.0.0:3210"
@@ -156,14 +156,16 @@ Stop with `Ctrl+C`, edit, then run the same command again. Existing files are ne
 | CLI option | Purpose |
 | --- | --- |
 | `--config PATH` | Select the configuration file; generate it if absent |
-| `--data-dir PATH` | Select data storage and the configuration location when `--config` is omitted |
+| `--data-dir PATH` | Select data storage without changing the default configuration location |
 | `--bind ADDRESS` | Explicitly override the listener |
 | `--workers COUNT` | Explicitly override workers, range `1–4` |
 | `--scan-interval SECONDS` | Explicitly override periodic scans; `0` disables them |
 | `--no-open` | Explicitly disable automatic browser opening |
 | `--version` / `--help` | Print version or help and exit |
 
-Explicit CLI settings override file values. They are recorded when generating a new file but do not rewrite an existing file. Editing `data_dir` selects another storage location; it does not migrate existing data. See the [MCP guide](docs/MCP.en.md) for `[mcp]` settings.
+Explicit CLI settings override file values. They are recorded when generating a new file but do not rewrite an existing file. Editing `data_dir` selects another storage location; it does not migrate existing data.
+
+When no explicit `--config` is given, the working-directory file is absent, and the initial data directory contains an older `config.toml`, Picsoc reads that file and creates the working-directory configuration with its effective settings and data path. The old file is retained. An existing working-directory file is never overwritten, and explicit `--config` does not trigger this migration. See the [MCP guide](docs/MCP.en.md) for `[mcp]` settings.
 
 For trusted LAN access, use `bind = "0.0.0.0:3210"` and a nonempty `password`. Docker additionally needs the published port changed to `"0.0.0.0:3210:3210"` in Compose. Enter the password on the login page; Basic Auth scripts use `picsoc` as the username. Use the server's LAN IP in the browser.
 
@@ -171,7 +173,7 @@ Basic Auth over plain HTTP has no transport encryption. Use an HTTPS reverse pro
 
 ## Backup and maintenance
 
-Stop the service and back up the entire data directory, not just the SQLite file: current changes may still be in its WAL. Back up originals separately. Restore with the same library paths and verify them before scanning. Removing a library keeps originals but removes its favorites and tags; adding it again does not restore that metadata.
+Stop the service and back up the entire data directory and the native working-directory `config.toml` separately. Docker keeps its configuration inside `/data`. Do not copy just the SQLite file: current changes may still be in its WAL. Back up originals separately. Restore with the same library paths and verify them before scanning. Removing a library keeps originals but removes its favorites and tags; adding it again does not restore that metadata.
 
 For upgrades, keep the previous program and a full pre-upgrade data backup. Restore both when rolling back; database downgrade compatibility is not guaranteed. The [operations guide](docs/OPERATIONS.md) covers backup, restore, upgrade, rollback, and an Nginx HTTPS example.
 

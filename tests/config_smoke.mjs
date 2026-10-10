@@ -10,7 +10,7 @@ import path from 'node:path';
 const binary = path.resolve(process.argv[2] || 'target/debug/picsoc');
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'picsoc-config-')));
 const data = path.join(root, 'data');
-const configPath = path.join(data, 'config.toml');
+const configPath = path.join(root, 'config.toml');
 const password = '星海"引号\\路径秘密';
 const obsoletePassword = 'obsolete-env-secret-must-not-work';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,8 +37,8 @@ async function freePort() {
   return port;
 }
 
-function launch(args) {
-  const child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+function launch(args, cwd = root, environment = env) {
+  const child = spawn(binary, args, { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
   const running = { child, logs: '', done: undefined, spawnError: undefined };
   child.stdout.on('data', bytes => { running.logs += bytes; });
   child.stderr.on('data', bytes => { running.logs += bytes; });
@@ -80,8 +80,8 @@ async function stop(running = active) {
   }
 }
 
-async function completed(args) {
-  const running = launch(args);
+async function completed(args, cwd = root, environment = env) {
+  const running = launch(args, cwd, environment);
   const timer = setTimeout(() => {
     if (running.child.exitCode === null && running.child.signalCode === null) running.child.kill('SIGKILL');
   }, 10000);
@@ -143,6 +143,7 @@ try {
     const result = await completed(['--data-dir', infoData, flag]);
     assert.equal(result.code, 0, result.logs);
     await assertNoFile(infoData);
+    await assertNoFile(configPath);
   }
 
   // First launch writes an editable template while continuing to serve HTTP.
@@ -155,14 +156,15 @@ try {
   assert.ok(first.logs.includes(configPath), `Startup must show its configuration file: ${first.logs}`);
   assertNoSecrets(first.logs);
   if (process.platform !== 'win32') assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+  await assertNoFile(path.join(data, 'config.toml'));
   await stop(first);
 
-  // The user's file changes take effect with only --data-dir and remain byte-for-byte intact.
+  // The user's root configuration takes effect without arguments and remains intact.
   const configuredPort = await freePort();
   const edited = configuration(configuredPort, data);
   await writeFile(configPath, edited, 'utf8');
   for (let restart = 0; restart < 2; restart++) {
-    const running = launch(['--data-dir', data]);
+    const running = launch([]);
     const state = await ready(running, configuredPort);
     assert.equal(state.auth.password_required, true);
     await assertPassword(state.base);
@@ -190,6 +192,63 @@ try {
     await assert.rejects(fetch(`http://127.0.0.1:${invalidPort}/api/auth/status`, { signal: AbortSignal.timeout(1000) }));
   }
 
+  // Import the old data-directory file once, preserving its relative data_dir location.
+  const migrationCwd = path.join(root, '迁移工作目录');
+  const legacyData = path.join(root, '旧数据目录');
+  await mkdir(migrationCwd);
+  await mkdir(legacyData);
+  const legacyPath = path.join(legacyData, 'config.toml');
+  const migratedPath = path.join(migrationCwd, 'config.toml');
+  const legacyResolvedData = path.join(legacyData, 'relative-original-data');
+  const legacyPort = await freePort();
+  const legacy = configuration(legacyPort, 'relative-original-data');
+  await writeFile(legacyPath, legacy, { mode: 0o600 });
+  const migrating = launch(['--data-dir', legacyData], migrationCwd);
+  const migrationState = await ready(migrating, legacyPort);
+  await assertPassword(migrationState.base);
+  assert.ok(migrating.logs.includes(migratedPath));
+  assertNoSecrets(migrating.logs);
+  const migrated = await readFile(migratedPath, 'utf8');
+  assert.equal(await readFile(legacyPath, 'utf8'), legacy);
+  if (process.platform !== 'win32') assert.equal((await stat(migratedPath)).mode & 0o777, 0o600);
+  // CLI data_dir overrides only this run; the migrated file remembers the old resolved path.
+  assert.ok((await stat(path.join(legacyData, 'picsoc.sqlite3'))).isFile());
+  await assertNoFile(path.join(legacyResolvedData, 'picsoc.sqlite3'));
+  await stop(migrating);
+  const migratedRestart = launch([], migrationCwd);
+  const migratedState = await ready(migratedRestart, legacyPort);
+  await assertPassword(migratedState.base);
+  assert.ok((await stat(path.join(legacyResolvedData, 'picsoc.sqlite3'))).isFile());
+  await assertNoFile(path.join(migrationCwd, 'relative-original-data'));
+  assert.equal(await readFile(migratedPath, 'utf8'), migrated);
+  await stop(migratedRestart);
+
+  // Once present, root configuration wins even when the legacy source changes.
+  const legacyChanged = configuration(await freePort(), 'another-relative-data', 'legacy-changed-password');
+  await writeFile(legacyPath, legacyChanged, 'utf8');
+  const preferredRoot = launch(['--data-dir', legacyData], migrationCwd);
+  const preferredState = await ready(preferredRoot, legacyPort);
+  await assertPassword(preferredState.base);
+  assert.equal(await readFile(migratedPath, 'utf8'), migrated);
+  assert.equal(await readFile(legacyPath, 'utf8'), legacyChanged);
+  await stop(preferredRoot);
+
+  // An explicit missing --config creates its own template without legacy migration.
+  const explicitCwd = path.join(root, '显式配置工作目录');
+  await mkdir(explicitCwd);
+  const explicitPath = path.join(explicitCwd, 'chosen.toml');
+  const explicitPort = await freePort();
+  const explicit = launch(['--config', explicitPath, '--data-dir', legacyData,
+    '--bind', `127.0.0.1:${explicitPort}`, '--no-open', '--scan-interval', '0'], explicitCwd);
+  const explicitState = await ready(explicit, explicitPort);
+  assert.equal(explicitState.auth.password_required, false);
+  assert.ok(explicit.logs.includes(explicitPath));
+  assertNoSecrets(explicit.logs);
+  assert.ok(!(await readFile(explicitPath, 'utf8')).includes('legacy-changed-password'));
+  assert.equal(await readFile(legacyPath, 'utf8'), legacyChanged);
+  await assertNoFile(path.join(explicitCwd, 'config.toml'));
+  await stop(explicit);
+
   // A custom file resolves relative data_dir against its directory, across platforms.
   const customParent = path.join(root, '自定义配置');
   await mkdir(customParent);
@@ -206,7 +265,7 @@ try {
   assertNoSecrets(customRunning.logs);
   await stop(customRunning);
 
-  console.log('Configuration smoke passed: first-run TOML, Ctrl+C, edited settings, password escaping, ignored legacy environment, restart preservation, invalid files, and custom relative paths.');
+  console.log('Configuration smoke passed: root TOML, Ctrl+C, edited settings, passwords, ignored legacy environment, immutable user files, invalid configuration, legacy migration and path preservation, root priority, and explicit configuration paths.');
 } catch (error) {
   if (active) console.error(active.logs);
   throw error;

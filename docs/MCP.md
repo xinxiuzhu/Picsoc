@@ -13,7 +13,7 @@ git pull --ff-only
 cargo run --locked --release
 ```
 
-首次运行会生成数据目录中的 `config.toml` 并打印路径。按 `Ctrl+C` 停止，编辑该文件。Debian root 用户的默认路径是 `/root/.local/share/picsoc/config.toml`；使用其他账号或自定义数据目录时以日志路径为准。保留生成的 `data_dir`，将下面字段修改为：
+从 Picsoc 项目根目录运行时，首次启动会在项目根目录生成 `config.toml` 并打印路径。按 `Ctrl+C` 停止，编辑该文件。默认配置是当前启动目录的 `./config.toml`，数据仍默认保存在应用数据目录；Debian root 用户为 `/root/.local/share/picsoc`。保留生成的 `data_dir`，将下面字段修改为：
 
 ```toml
 bind = "0.0.0.0:3210"
@@ -29,7 +29,7 @@ redirect_uris = []
 
 然后再次执行 `cargo run --locked --release`。这些字段应修改到已有文件对应位置，不要追加重复键或重复 `[mcp]` 表。已有文件不会覆盖，修改后须重启生效，配置非法则启动失败。原来的运行环境变量不再读取；将原密码与 MCP 配置手动移入 TOML。
 
-沿用原来的 `--data-dir`，才能继续使用已有图库、收藏与标签，默认配置也会在该目录生成。需要自定配置位置可用 `--config /路径/config.toml`。显式 CLI 参数优先文件值，但不会重写已有文件。从源码构建需要 Node.js/npm，`cargo run` 会自动编译前端；使用发行程序时运行 `./picsoc`。
+沿用原来的数据目录，才能继续使用已有图库、收藏与标签；`--data-dir` 只选择数据存储，不改变默认配置位置。需要自定配置位置可用 `--config /路径/config.toml`。未显式指定 `--config` 且启动目录没有文件时，如原初始数据目录有旧 `config.toml`，会读取并在启动目录生成配置，保留设置、数据路径和旧文件。启动目录已有配置不覆盖；显式 `--config` 不触发迁移。显式 CLI 参数优先文件值，但不会重写已有文件。从源码构建需要 Node.js/npm，`cargo run` 会自动编译前端；使用发行程序时运行 `./picsoc`。
 
 Docker 首次 `docker compose up -d --build` 生成宿主机 `picsoc-data/config.toml`（容器 `/data/config.toml`），先 `docker compose stop picsoc`，按上述内容配置 `password` 与 `[mcp]`，再 `docker compose start picsoc`。更新已有容器仍使用 `docker compose up -d --build`；之后配置修改可通过 `docker compose restart picsoc` 生效。素材继续只读挂载，作品保存到 `/data/generated`，授权记录保存到 `/data/mcp-oauth.json`；镜像带有中文与拉丁字体。直接运行的 Debian 如缺少中文字体，可安装：
 

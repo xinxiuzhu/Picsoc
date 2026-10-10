@@ -14,7 +14,7 @@ Picsoc 当前面向个人使用或可信设备间共享，使用一个服务、�
 
 原图只读索引；移除素材库不会删除原图。递归扫描跳过目录内的符号链接，并检查媒体路径是否仍处于素材目录中。图片解码有大小和像素限制，但它们不是进程总内存限额，也不保证任意损坏文件都能安全处理。使用低权限系统用户、保持依赖更新，并避免导入不可信来源的大量文件。
 
-`config.toml` 存放明文共享密码和可选静态 MCP token，Unix 首次生成权限为 `0600`；已有文件权限由用户维护。数据库、标签、路径和缩略图以本机普通文件存储，没有应用层加密。原图下载保留文件内容及其中的元数据。备份、`config.toml`、日志和数据目录应使用合适的文件权限；不要将真实素材或凭据提交到仓库。
+原生 `config.toml` 默认位于启动工作目录，Docker 配置位于 `/data`；配置须与数据一起备份并保护。`config.toml` 存放明文共享密码和可选静态 MCP token，Unix 首次生成权限为 `0600`；已有文件权限由用户维护。数据库、标签、路径和缩略图以本机普通文件存储，没有应用层加密。原图下载保留文件内容及其中的元数据。备份、`config.toml`、日志和数据目录应使用合适的文件权限；不要将真实素材或凭据提交到仓库。
 
 ## 私密漏洞报告
 
@@ -32,7 +32,7 @@ Picsoc 当前面向个人使用或可信设备间共享，使用一个服务、�
 
 ## English
 
-Picsoc is a personal or trusted-network application with an optional shared password configured in `config.toml`. That file stores the password and optional static MCP token in plaintext; newly generated Unix files use mode `0600`. Protect existing configuration permissions and backups. Browsers use the login page and an HttpOnly, SameSite=Strict session cookie; scripts can still send Basic Auth (`picsoc` is the username). Sessions expire after 24 hours, are revoked on logout, and are cleared when the service restarts. Static UI and authentication status are public; data and media require authentication when a password is configured. It has no per-user roles, library isolation, or application-level encryption. Authenticated users can add image directories readable by the service, download originals, and edit library metadata. Use a low-privilege account, mount only the required folders, protect backups and credentials, and use HTTPS for access across devices or untrusted networks.
+Picsoc is a personal or trusted-network application with an optional shared password configured in `config.toml`. The native file defaults to the launch working directory; Docker keeps it under `/data`. Back up the configuration as well as the data directory. That file stores the password and optional static MCP token in plaintext; newly generated Unix files use mode `0600`. Protect existing configuration permissions and backups. Browsers use the login page and an HttpOnly, SameSite=Strict session cookie; scripts can still send Basic Auth (`picsoc` is the username). Sessions expire after 24 hours, are revoked on logout, and are cleared when the service restarts. Static UI and authentication status are public; data and media require authentication when a password is configured. It has no per-user roles, library isolation, or application-level encryption. Authenticated users can add image directories readable by the service, download originals, and edit library metadata. Use a low-privilege account, mount only the required folders, protect backups and credentials, and use HTTPS for access across devices or untrusted networks.
 
 The default native listener and the Docker host port are loopback-only. Host/Origin checks, read-only indexing, symlink exclusions, and decoder limits reduce specific risks; they do not replace authentication, operating-system permissions, or total process memory limits.
 
